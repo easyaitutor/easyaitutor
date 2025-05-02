@@ -267,3 +267,20 @@ if __name__ == "__main__":
         server_name="0.0.0.0",
         server_port=int(os.environ.get("PORT", 7860)),
     )
+# … all your existing imports, helpers, callbacks, build_ui() …
+
+from fastapi import FastAPI
+
+# Build your Gradio interface
+demo = build_ui()
+
+# 1) Create a FastAPI app
+app = FastAPI()
+
+# 2) Mount Gradio at /instructor
+app = gr.mount_gradio_app(app, demo, path="/instructor")
+
+# Optional: a simple health check so Render sees you're up
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
