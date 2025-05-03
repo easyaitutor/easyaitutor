@@ -128,8 +128,9 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
         # create config & syllabus
         sections = split_sections(pdf_file)
         full_text = "\n\n".join(f"{s['title']}\n{s['content']}" for s in sections)
-        # description
-        resp = openai.ChatCompletion.create(
+
+        # generate description
+        resp = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role":"system","content":"Generate a concise course description."},
@@ -137,8 +138,9 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
             ]
         )
         desc = resp.choices[0].message.content.strip()
-        # objectives
-        resp2 = openai.ChatCompletion.create(
+
+        # generate objectives
+        resp2 = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role":"system","content":"Generate 5–12 clear learning objectives."},
@@ -162,19 +164,28 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
         p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
         syllabus = generate_syllabus(cfg)
-        # prepare blank lesson plan placeholder
         empty_plan = ""
+
         return (
-            gr.update(value=syllabus, visible=True, interactive=False),
-            gr.update(visible=False),                # hide Save Setup
-            gr.update(visible=True),                 # show Edit Syllabus
-            gr.update(visible=True),                 # show Email Syllabus
-            gr.update(visible=True),                 # show Generate Plan
-            gr.update(visible=True),                 # show Email Plan
-            gr.update(value=empty_plan, visible=True, interactive=False)  # show plan box
+            gr.update(value=syllabus, visible=True, interactive=False),  # syllabus_output
+            gr.update(visible=False),                                     # btn_save
+            gr.update(visible=True),                                      # btn_edit_syl
+            gr.update(visible=True),                                      # btn_email_syl
+            gr.update(visible=True),                                      # btn_gen_plan
+            gr.update(visible=True),                                      # btn_email_plan
+            gr.update(value=empty_plan, visible=True, interactive=False)  # lesson_plan_output
         )
     except Exception:
-        return (f"⚠️ Error:\n{traceback.format_exc()}",) + (None,)*6
+        err = f"⚠️ Error:\n{traceback.format_exc()}"
+        return (
+            gr.update(value=err, visible=True, interactive=False),  # syllabus_output shows error
+            gr.update(visible=True),                                # keep Save Setup visible
+            gr.update(visible=False),                               # hide others
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(value="", visible=False, interactive=False)   # lesson_plan_output hidden
+        )
 
 def enable_edit_syllabus():
     return gr.update(interactive=True)
@@ -305,13 +316,13 @@ def build_ui():
         btn_save       = gr.Button("Save Setup")
         btn_edit_syl   = gr.Button("Edit Syllabus",       visible=False)
         btn_email_syl  = gr.Button("Email Syllabus",      visible=False)
-        btn_gen_plan   = gr.Button("Generate Lessons Plan",visible=False)
-        btn_email_plan = gr.Button("Email Lessons Plan",   visible=False)
+        btn_gen_plan   = gr.Button("Generate Lesson Plan",visible=False)
+        btn_email_plan = gr.Button("Email Lesson Plan",   visible=False)
 
         btn_save.click(
-            save_setup,
-            inputs=[course,instr,email,devices,pdf_file,
-                    sy,sm,sd,ey,em,ed,class_days,students],
+            fn=save_setup,
+            inputs=[course, instr, email, devices, pdf_file,
+                    sy, sm, sd, ey, em, ed, class_days, students],
             outputs=[
                 syllabus_output, btn_save, btn_edit_syl,
                 btn_email_syl, btn_gen_plan, btn_email_plan,
@@ -321,17 +332,17 @@ def build_ui():
         btn_edit_syl.click(enable_edit_syllabus, [], [syllabus_output])
         btn_email_syl.click(
             email_syllabus_callback,
-            inputs=[course,instr,email,students,syllabus_output],
+            inputs=[course, instr, email, students, syllabus_output],
             outputs=[status_syl]
         )
         btn_gen_plan.click(
             generate_plan_callback,
-            inputs=[sy,sm,sd,ey,em,ed,class_days],
+            inputs=[sy, sm, sd, ey, em, ed, class_days],
             outputs=[lesson_plan_output]
         )
         btn_email_plan.click(
             email_plan_callback,
-            inputs=[course,instr,email,students,lesson_plan_output],
+            inputs=[course, instr, email, students, lesson_plan_output],
             outputs=[status_plan]
         )
 
