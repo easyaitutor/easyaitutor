@@ -65,23 +65,20 @@ def split_sections(pdf_file):
                 "content": text[start:end].strip()
             })
         return sections
-    # fallback: split every 5 sentences
     chunks = re.split(r'(?<=[.?!])\s+', text)
     return [
-        {"title": f"Lesson {i//5+1}",
-         "content": " ".join(chunks[i:i+5]).strip()}
+        {"title": f"Lesson {i//5+1}", "content": " ".join(chunks[i:i+5]).strip()}
         for i in range(0, len(chunks), 5)
     ]
 
 def count_classes(start_date, end_date, weekdays):
-    count, current = 0, start_date
-    while current <= end_date:
-        if current.weekday() in weekdays:
-            count += 1
-        current += timedelta(days=1)
-    return count
+    cnt, cur = 0, start_date
+    while cur <= end_date:
+        if cur.weekday() in weekdays:
+            cnt += 1
+        cur += timedelta(days=1)
+    return cnt
 
-# ——— Syllabus Generation ———
 def generate_syllabus(cfg):
     sd = datetime.strptime(cfg['start_date'], '%Y-%m-%d').date()
     ed = datetime.strptime(cfg['end_date'],   '%Y-%m-%d').date()
@@ -99,29 +96,27 @@ def generate_syllabus(cfg):
         "COURSE DESCRIPTION:", cfg['course_description'], "",
         "OBJECTIVES:"
     ] + objectives + [
-        "", "GRADING & ASSESSMENTS:",
+        "",
+        "GRADING & ASSESSMENTS:",
         " • Each class includes a quiz.",
         " • If score < 60%, student may retake the quiz next day.",
         " • Final grade = average of all quiz scores.",
-        "", "SCHEDULE OVERVIEW:",
+        "",
+        "SCHEDULE OVERVIEW:",
         f" • {month_range}, every {', '.join(cfg['class_days'])}",
-        "", "OFFICE HOURS & SUPPORT:",
+        "",
+        "OFFICE HOURS & SUPPORT:",
         " • Office Hours: Tuesdays 3–5 PM; Thursdays 10–11 AM (Zoom)",
         " • Email response within 24 hours on weekdays"
     ]
     return "\n".join(header + [""] + body)
 
 # ——— Callbacks ———
-def save_setup(
-    course_name, instr_name, instr_email, devices, pdf_file,
-    sy, sm, sd, ey, em, ed, class_days, students
-):
+def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
+               sy, sm, sd, ey, em, ed, class_days, students):
     try:
         sections = split_sections(pdf_file)
-        full_text = "\n\n".join(
-            f"{s['title']}\n{s['content']}" for s in sections
-        )
-        # Generate description
+        full_text = "\n\n".join(f"{s['title']}\n{s['content']}" for s in sections)
         desc = openai.ChatCompletion.create(
             model='gpt-3.5-turbo',
             messages=[
@@ -130,7 +125,6 @@ def save_setup(
             ],
             max_tokens=200
         ).choices[0].message.content.strip()
-        # Generate objectives
         obj = openai.ChatCompletion.create(
             model='gpt-3.5-turbo',
             messages=[
@@ -143,17 +137,16 @@ def save_setup(
 
         cfg = {
             'course_name': course_name,
-            'instructor': {'name': instr_name, 'email': instr_email},
+            'instructor':  {'name': instr_name, 'email': instr_email},
             'class_days':   class_days,
-            'start_date':  f"{sy}-{sm}-{sd}",
-            'end_date':    f"{ey}-{em}-{ed}",
+            'start_date':   f"{sy}-{sm}-{sd}",
+            'end_date':     f"{ey}-{em}-{ed}",
             'sections':     sections,
-            'course_description': desc,
-            'learning_objectives': objectives
+            'course_description':    desc,
+            'learning_objectives':   objectives
         }
-        (CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json").write_text(
-            json.dumps(cfg, ensure_ascii=False, indent=2), encoding='utf-8'
-        )
+        (CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json")\
+            .write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding='utf-8')
         syllabus = generate_syllabus(cfg)
         return (
             gr.update(value=syllabus, visible=True, interactive=False),
@@ -162,49 +155,43 @@ def save_setup(
             gr.update(visible=True),
             gr.update(visible=True)
         )
-    except Exception:
+    except Exception as e:
         return (f"⚠️ Error:\n{traceback.format_exc()}",) + (None,)*4
 
 def enable_edit():
     return gr.update(interactive=True)
 
 def download_syllabus(course_name, text):
-    # (You already have this helper; ensure it’s defined above.)
-    file_stream = io.BytesIO()
+    buf = io.BytesIO()
     doc = Document()
     for line in text.split("\n"):
         doc.add_paragraph(line)
-    doc.save(file_stream); file_stream.seek(0)
-    filename = f"{course_name.replace(' ','_').lower()}_syllabus.docx"
-    return file_stream, filename
+    doc.save(buf); buf.seek(0)
+    fn = f"{course_name.replace(' ','_').lower()}_syllabus.docx"
+    return buf, fn
 
 def email_syllabus_callback(course_name, instr_name, instr_email, students_text, syllabus_text):
     try:
-        file_stream, filename = download_syllabus(course_name, syllabus_text)
-        file_bytes = file_stream.read()
-
+        buf, fn = download_syllabus(course_name, syllabus_text)
+        data = buf.read()
         recipients = [(instr_name, instr_email)]
         for line in students_text.splitlines():
             if ',' in line:
-                name, email = line.split(',',1)
-                recipients.append((name.strip(), email.strip()))
+                n, e = line.split(',',1)
+                recipients.append((n.strip(), e.strip()))
 
-        for name, email in recipients:
+        for n, e in recipients:
             msg = EmailMessage()
             msg['Subject'] = f"Course Syllabus: {course_name}"
             msg['From']    = SMTP_USER
-            msg['To']      = email
-            body = (
-                f"Hi {name},\n\n"
-                f"Please find attached the syllabus for {course_name}.\n\n"
-                "Best,\nAI Tutor Bot"
-            )
+            msg['To']      = e
+            body = f"Hi {n},\n\nPlease find attached the syllabus for {course_name}.\n\nBest,\nAI Tutor Bot"
             msg.set_content(body)
             msg.add_attachment(
-                file_bytes,
+                data,
                 maintype='application',
                 subtype='vnd.openxmlformats-officedocument.wordprocessingml.document',
-                filename=filename
+                filename=fn
             )
             with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
                 server.starttls()
@@ -215,7 +202,7 @@ def email_syllabus_callback(course_name, instr_name, instr_email, students_text,
     except Exception:
         return gr.update(value=f"⚠️ Email error:\n{traceback.format_exc()}", visible=True)
 
-# ——— Build the Gradio UI ———
+# ——— Build UI ———
 def build_ui():
     with gr.Blocks() as demo:
         gr.Markdown("## AI Tutor Instructor Panel")
@@ -246,38 +233,18 @@ def build_ui():
 
         btn_save.click(
             save_setup,
-            inputs=[course,instr,email,devices,pdf_file,
-                    sy,sm,sd,ey,em,ed,class_days,students],
+            inputs=[course,instr,email,devices,pdf_file,sy,sm,sd,ey,em,ed,class_days,students],
             outputs=[output,btn_save,btn_edit,btn_email,status]
         )
         btn_edit.click(enable_edit, inputs=None, outputs=[output])
-        btn_email.click(
-            email_syllabus_callback,
-            inputs=[course,instr,email,students,output],
-            outputs=[status]
-        )
+        btn_email.click(email_syllabus_callback,
+                        inputs=[course,instr,email,students,output],
+                        outputs=[status])
     return demo
 
-# ——— Export for FastAPI + Gradio ———
-from fastapi import FastAPI
-
-# 1) Build your Gradio interface once
-demo = build_ui()
-
-# 2) Create a FastAPI app
-app = FastAPI()
-
-# 3) Mount Gradio at the root path "/"
-app = gr.mount_gradio_app(app, demo, path="/")
-
-# 4) Health check endpoint (so Render knows your service is up)
-@app.get("/healthz")
-def healthz():
-    return {"status": "ok"}
-
-# 5) Local debug entrypoint
+# ——— Entrypoint ———
 if __name__ == "__main__":
-    demo.launch(
+    build_ui().launch(
         server_name="0.0.0.0",
         server_port=int(os.environ.get("PORT", 7860))
     )
