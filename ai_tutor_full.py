@@ -258,37 +258,26 @@ def build_ui():
         )
     return demo
 
-# ——— Export for Uvicorn/ASGI ———
-app = build_ui()
-
-if __name__ == "__main__":
-    # Local dev
-    app.launch(
-        server_name="0.0.0.0",
-        server_port=int(os.environ.get("PORT", 7860)),
-    )
-# … all your existing imports, helpers, callbacks, build_ui() …
-
+# ——— Export for FastAPI + Gradio ———
 from fastapi import FastAPI
 
-# Build your Gradio interface
+# 1) Build your Gradio interface once
 demo = build_ui()
 
-# 1) Create a FastAPI app
+# 2) Create a FastAPI app
 app = FastAPI()
 
-# 2) Mount Gradio at /instructor
-app = gr.mount_gradio_app(app, demo, path="/instructor")
+# 3) Mount Gradio at the root path "/"
+app = gr.mount_gradio_app(app, demo, path="/")
 
-# Optional: a simple health check so Render sees you're up
+# 4) Health check endpoint (so Render knows your service is up)
 @app.get("/healthz")
 def healthz():
+    return {"status": "ok"}
 
+# 5) Local debug entrypoint
 if __name__ == "__main__":
-    demo = build_ui()
     demo.launch(
         server_name="0.0.0.0",
         server_port=int(os.environ.get("PORT", 7860))
     )
-
-    return {"status": "ok"}
