@@ -79,6 +79,7 @@ def count_classes(start_date, end_date, weekdays):
         cur += timedelta(days=1)
     return cnt
 
+# ——— Syllabus Generation ———
 def generate_syllabus(cfg):
     sd = datetime.strptime(cfg['start_date'], '%Y-%m-%d').date()
     ed = datetime.strptime(cfg['end_date'],   '%Y-%m-%d').date()
@@ -93,7 +94,7 @@ def generate_syllabus(cfg):
     ]
     objectives = [f" • {o}" for o in cfg['learning_objectives']]
     body = [
-        "COURSE DESCRIPTION:", cfg['course_description'], "",
+        "COURSE DESCRIPTION:", cfg['course_description'], "",  
         "OBJECTIVES:"
     ] + objectives + [
         "",
@@ -155,7 +156,7 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
             gr.update(visible=True),
             gr.update(visible=True)
         )
-    except Exception as e:
+    except Exception:
         return (f"⚠️ Error:\n{traceback.format_exc()}",) + (None,)*4
 
 def enable_edit():
@@ -182,14 +183,14 @@ def email_syllabus_callback(course_name, instr_name, instr_email, students_text,
 
         for n, e in recipients:
             msg = EmailMessage()
-            msg['Subject'] = f"Course Syllabus: {course_name}"
+            msg['Subject'] = f"Course Syllabus: {course_name}"  
             msg['From']    = SMTP_USER
             msg['To']      = e
             body = f"Hi {n},\n\nPlease find attached the syllabus for {course_name}.\n\nBest,\nAI Tutor Bot"
             msg.set_content(body)
             msg.add_attachment(
                 data,
-                maintype='application',
+                maintype='application',  
                 subtype='vnd.openxmlformats-officedocument.wordprocessingml.document',
                 filename=fn
             )
@@ -242,9 +243,12 @@ def build_ui():
                         outputs=[status])
     return demo
 
-# ——— Entrypoint ———
-if __name__ == "__main__":
-    build_ui().launch(
-        server_name="0.0.0.0",
-        server_port=int(os.environ.get("PORT", 7860))
-    )
+# ——— ASGI + Gradio Mount ———
+from fastapi import FastAPI
+
+demo = build_ui()
+app = FastAPI()
+app = gr.mount_gradio_app(app, demo, path="/")
+
+@app.get("/healthz")
+
