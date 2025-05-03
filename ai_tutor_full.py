@@ -144,16 +144,17 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
             .write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding='utf-8')
 
         syllabus = generate_syllabus(cfg)
-        return (
-            gr.update(value=syllabus, visible=True, interactive=False),
-            gr.update(visible=False),  # hide Save
-            gr.update(visible=True),   # show Edit
-            gr.update(visible=True),   # show Email
-            gr.update(visible=False)   # hide status until email clicked
-        )
-    except Exception:
-        # surface any error back into output box
-        return (f"⚠️ Error:\n{traceback.format_exc()}",) + (None,)*4
+        except Exception as e:
+-        return (f"⚠️ Error:\n{traceback.format_exc()}",) + (None,)*4
++        # on error: clear preview, re-enable Save, hide Edit/Email, show error in status
++        err = traceback.format_exc()
++        return (
++            gr.update(value="", visible=False, interactive=False),   # clear the syllabus preview
++            gr.update(visible=True),                                # re-show “Save Setup”
++            gr.update(visible=False),                               # hide “Edit”
++            gr.update(visible=False),                               # hide “Email”
++            gr.update(value=f"⚠️ Error:\n{err}", visible=True)      # show error message
++        )
 
 def enable_edit():
     return gr.update(interactive=True)
