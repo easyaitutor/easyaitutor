@@ -61,8 +61,12 @@ def split_sections(pdf_file):
         for i, h in enumerate(headings):
             start = h.end()
             end = headings[i+1].start() if i+1 < len(headings) else len(text)
-            sections.append({"title": h.group().strip(), "content": text[start:end].strip()})
+            sections.append({
+                "title":   h.group().strip(),
+                "content": text[start:end].strip()
+            })
         return sections
+    # fallback: chunk into groups of 5 sentences
     chunks = re.split(r'(?<=[.?!])\s+', text)
     return [
         {"title": f"Lesson {i//5+1}", "content": " ".join(chunks[i:i+5]).strip()}
@@ -106,30 +110,54 @@ def generate_syllabus(cfg):
     ]
     return "\n".join(header + [""] + body)
 
-def generate_lesson_plan_text(start, end, class_days):
-    sd = datetime.strptime(start, '%Y-%m-%d').date()
-    ed = datetime.strptime(end,   '%Y-%m-%d').date()
-    weekdays = {days_map[d] for d in class_days}
+# ——— UPDATED generate_lesson_plan_text & Callback ———
+def generate_lesson_plan_text_with_summary(cfg):
+    # build list of class dates
+    sd = datetime.strptime(cfg['start_date'], '%Y-%m-%d').date()
+    ed = datetime.strptime(cfg['end_date'],   '%Y-%m-%d').date()
+    weekdays = {days_map[d] for d in cfg['class_days']}
     dates = []
     cur = sd
     while cur <= ed:
         if cur.weekday() in weekdays:
             dates.append(cur)
         cur += timedelta(days=1)
-    lines = []
-    for i, d in enumerate(dates):
-        lines.append(f"Lesson {i+1} ({d.strftime('%B %d, %Y')}): ")
-    return "\n".join(lines)
 
-# ——— Callbacks ———
+    # pair each date with the corresponding section summary
+    plan_lines = []
+    sections = cfg.get("sections", [])
+    for i, d in enumerate(dates):
+        date_str = d.strftime('%B %d, %Y')
+        # if we have a section for this lesson, use its first sentence
+        if i < len(sections):
+            first_sent = sections[i]['content'].split('. ')[0].strip()
+            # ensure it ends with a period
+            if not first_sent.endswith('.'):
+                first_sent += '.'
+            summary = first_sent
+        else:
+            summary = "Topic to be announced."
+        plan_lines.append(f"Lesson {i+1} ({date_str}): {summary}")
+    return "\n".join(plan_lines)
+
+def generate_plan_callback(course_name, sy, sm, sd, ey, em, ed, class_days):
+    try:
+        # load the saved config
+        cfg_path = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        # generate plan with one-sentence summaries
+        plan = generate_lesson_plan_text_with_summary(cfg)
+        return gr.update(value=plan, visible=True, interactive=True)
+    except Exception:
+        return gr.update(value=f"⚠️ Error generating plan:\n{traceback.format_exc()}", visible=True, interactive=True)
+
+# ——— Other callbacks unchanged ———
 def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
                sy, sm, sd, ey, em, ed, class_days, students):
     try:
-        # create config & syllabus
         sections = split_sections(pdf_file)
         full_text = "\n\n".join(f"{s['title']}\n{s['content']}" for s in sections)
 
-        # generate description
         resp = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -139,7 +167,6 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
         )
         desc = resp.choices[0].message.content.strip()
 
-        # generate objectives
         resp2 = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -151,40 +178,39 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
         objectives = [ln.strip(" -•") for ln in obj_lines if ln.strip()]
 
         cfg = {
-            "course_name": course_name,
-            "instructor":  {"name": instr_name, "email": instr_email},
-            "class_days":   class_days,
-            "start_date":   f"{sy}-{sm}-{sd}",
-            "end_date":     f"{ey}-{em}-{ed}",
-            "sections":     sections,
-            "course_description":    desc,
-            "learning_objectives":   objectives
+            "course_name":         course_name,
+            "instructor":          {"name": instr_name, "email": instr_email},
+            "class_days":          class_days,
+            "start_date":          f"{sy}-{sm}-{sd}",
+            "end_date":            f"{ey}-{em}-{ed}",
+            "sections":            sections,
+            "course_description":  desc,
+            "learning_objectives": objectives
         }
         p = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
         p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
         syllabus = generate_syllabus(cfg)
         empty_plan = ""
-
         return (
-            gr.update(value=syllabus, visible=True, interactive=False),  # syllabus_output
-            gr.update(visible=False),                                     # btn_save
-            gr.update(visible=True),                                      # btn_edit_syl
-            gr.update(visible=True),                                      # btn_email_syl
-            gr.update(visible=True),                                      # btn_gen_plan
-            gr.update(visible=True),                                      # btn_email_plan
-            gr.update(value=empty_plan, visible=True, interactive=False)  # lesson_plan_output
+            gr.update(value=syllabus, visible=True, interactive=False),
+            gr.update(visible=False),
+            gr.update(visible=True),
+            gr.update(visible=True),
+            gr.update(visible=True),
+            gr.update(visible=True),
+            gr.update(value=empty_plan, visible=True, interactive=False)
         )
     except Exception:
         err = f"⚠️ Error:\n{traceback.format_exc()}"
         return (
-            gr.update(value=err, visible=True, interactive=False),  # syllabus_output shows error
-            gr.update(visible=True),                                # keep Save Setup visible
-            gr.update(visible=False),                               # hide others
+            gr.update(value=err, visible=True, interactive=False),
+            gr.update(visible=True),
             gr.update(visible=False),
             gr.update(visible=False),
             gr.update(visible=False),
-            gr.update(value="", visible=False, interactive=False)   # lesson_plan_output hidden
+            gr.update(visible=False),
+            gr.update(value="", visible=False, interactive=False)
         )
 
 def enable_edit_syllabus():
@@ -226,15 +252,6 @@ def email_syllabus_callback(course_name, instr_name, instr_email, students_text,
         return gr.update(value="✅ Syllabus emailed!", visible=True)
     except Exception:
         return gr.update(value=f"⚠️ Email error:\n{traceback.format_exc()}", visible=True)
-
-def generate_plan_callback(sy, sm, sd, ey, em, ed, class_days):
-    try:
-        start = f"{sy}-{sm}-{sd}"
-        end   = f"{ey}-{em}-{ed}"
-        plan = generate_lesson_plan_text(start, end, class_days)
-        return gr.update(value=plan, visible=True, interactive=True)
-    except Exception:
-        return gr.update(value=f"⚠️ Error generating plan:\n{traceback.format_exc()}", visible=True, interactive=True)
 
 def email_plan_callback(course_name, instr_name, instr_email, students_text, plan_text):
     try:
@@ -335,9 +352,10 @@ def build_ui():
             inputs=[course, instr, email, students, syllabus_output],
             outputs=[status_syl]
         )
+        # now include course name as first input
         btn_gen_plan.click(
             generate_plan_callback,
-            inputs=[sy, sm, sd, ey, em, ed, class_days],
+            inputs=[course, sy, sm, sd, ey, em, ed, class_days],
             outputs=[lesson_plan_output]
         )
         btn_email_plan.click(
