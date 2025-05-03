@@ -110,6 +110,7 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
     try:
         sections = split_sections(pdf_file)
         full_text = "\n\n".join(f"{s['title']}\n{s['content']}" for s in sections)
+        # description
         desc = openai.ChatCompletion.create(
             model='gpt-3.5-turbo',
             messages=[
@@ -118,6 +119,7 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
             ],
             max_tokens=200
         ).choices[0].message.content.strip()
+        # objectives
         obj = openai.ChatCompletion.create(
             model='gpt-3.5-turbo',
             messages=[
@@ -131,22 +133,26 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
         cfg = {
             'course_name': course_name,
             'instructor':  {'name': instr_name, 'email': instr_email},
-            'class_days':   class_days,
-            'start_date':   f"{sy}-{sm}-{sd}",
-            'end_date':     f"{ey}-{em}-{ed}",
-            'sections':     sections,
+            'class_days':  class_days,
+            'start_date':  f"{sy}-{sm}-{sd}",
+            'end_date':    f"{ey}-{em}-{ed}",
+            'sections':    sections,
             'course_description':    desc,
             'learning_objectives':   objectives
         }
-        path = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
-        path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding='utf-8')
+        (CONFIG_DIR / f"{course_name.replace(' ', '_').lower()}_config.json")\
+            .write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding='utf-8')
+
         syllabus = generate_syllabus(cfg)
         return (
             gr.update(value=syllabus, visible=True, interactive=False),
-            gr.update(visible=False), gr.update(visible=True),
-            gr.update(visible=True), gr.update(visible=True)
+            gr.update(visible=False),  # hide Save
+            gr.update(visible=True),   # show Edit
+            gr.update(visible=True),   # show Email
+            gr.update(visible=False)   # hide status until email clicked
         )
     except Exception:
+        # surface any error back into output box
         return (f"⚠️ Error:\n{traceback.format_exc()}",) + (None,)*4
 
 def enable_edit():
@@ -168,7 +174,8 @@ def email_syllabus_callback(course_name, instr_name, instr_email, students_text,
         recipients = [(instr_name, instr_email)]
         for line in students_text.splitlines():
             if ',' in line:
-                n, e = line.split(',',1); recipients.append((n.strip(), e.strip()))
+                n, e = line.split(',',1)
+                recipients.append((n.strip(), e.strip()))
         for n, e in recipients:
             msg = EmailMessage()
             msg['Subject'] = f"Course Syllabus: {course_name}"
@@ -189,7 +196,7 @@ def email_syllabus_callback(course_name, instr_name, instr_email, students_text,
     except Exception:
         return gr.update(value=f"⚠️ Email error:\n{traceback.format_exc()}", visible=True)
 
-# ——— Build the Gradio UI ———
+# ——— Build Gradio UI ———
 def build_ui():
     with gr.Blocks() as demo:
         gr.Markdown("## AI Tutor Instructor Panel")
@@ -197,35 +204,48 @@ def build_ui():
             course = gr.Textbox(label="Course Name")
             instr  = gr.Textbox(label="Instructor Name")
             email  = gr.Textbox(label="Instructor Email")
-        devices  = gr.CheckboxGroup(["phone","pc"], label="Allowed Devices")
-        pdf_file = gr.File(label="Upload PDF (.pdf)", file_types=[".pdf"])
-        years    = [str(y) for y in range(2023,2031)]
-        months   = [f"{m:02d}" for m in range(1,13)]
-        days     = [f"{d:02d}" for d in range(1,32)]
+        devices   = gr.CheckboxGroup(["phone","pc"], label="Allowed Devices")
+        pdf_file  = gr.File(label="Upload PDF (.pdf)", file_types=[".pdf"])
+        years     = [str(y) for y in range(2023,2031)]
+        months    = [f"{m:02d}" for m in range(1,13)]
+        days      = [f"{d:02d}"  for d in range(1,32)]
         with gr.Row():
-            sy, sm, sd = gr.Dropdown(years, label="Start Year"), gr.Dropdown(months, label="Start Month"), gr.Dropdown(days, label="Start Day")
+            sy = gr.Dropdown(years, label="Start Year")
+            sm = gr.Dropdown(months, label="Start Month")
+            sd = gr.Dropdown(days,   label="Start Day")
         with gr.Row():
-            ey, em, ed = gr.Dropdown(years, label="End Year"),   gr.Dropdown(months, label="End Month"),   gr.Dropdown(days, label="End Day")
+            ey = gr.Dropdown(years, label="End Year")
+            em = gr.Dropdown(months, label="End Month")
+            ed = gr.Dropdown(days,   label="End Day")
         class_days = gr.CheckboxGroup(list(days_map.keys()), label="Class Days")
         students   = gr.Textbox(label="Students (Name,Email per line)", lines=4)
-        output     = gr.Textbox(label="Syllabus Preview", lines=30, interactive=False, visible=False)
-        status     = gr.Textbox(label="Email Status", lines=2, interactive=False, visible=False)
-        btn_save   = gr.Button("Save Setup")
-        btn_edit   = gr.Button("Edit", visible=False)
-        btn_email  = gr.Button("Email Syllabus", visible=False)
 
-        btn_save.click(save_setup, [course,instr,email,devices,pdf_file,sy,sm,sd,ey,em,ed,class_days,students],
-                                      [output,btn_save,btn_edit,btn_email,status])
+        output = gr.Textbox(label="Syllabus Preview", lines=30, interactive=False, visible=False)
+        status = gr.Textbox(label="Email Status",     lines=2,  interactive=False, visible=False)
+
+        btn_save  = gr.Button("Save Setup")
+        btn_edit  = gr.Button("Edit",            visible=False)
+        btn_email = gr.Button("Email Syllabus",  visible=False)
+
+        btn_save.click(
+            save_setup,
+            inputs=[course,instr,email,devices,pdf_file,sy,sm,sd,ey,em,ed,class_days,students],
+            outputs=[output, btn_save, btn_edit, btn_email, status]
+        )
         btn_edit.click(enable_edit, [], [output])
-        btn_email.click(email_syllabus_callback, [course,instr,email,students,output], [status])
+        btn_email.click(email_syllabus_callback,
+                        [course,instr,email,students,output],
+                        [status])
     return demo
 
-# ——— FastAPI + Gradio mounting ———
+# ——— FastAPI + mount ———
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["GET","POST","OPTIONS"], allow_headers=["*"],
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["GET","POST","OPTIONS"],
+    allow_headers=["*"],
 )
 
 gradio_app = build_ui()
@@ -235,6 +255,7 @@ app = gr.mount_gradio_app(app, gradio_app, path="/")
 def healthz():
     return {"status":"ok"}
 
-# ——— Local dev entrypoint ———
+# ——— Local dev ———
 if __name__ == "__main__":
-    build_ui().launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 7860)))
