@@ -111,22 +111,26 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
         # Split PDF into sections, then call OpenAI for description + objectives
         sections = split_sections(pdf_file)
         full_text = "\n\n".join(f"{s['title']}\n{s['content']}" for s in sections)
-        desc = openai.ChatCompletion.create(
-            model='gpt-3.5-turbo',
-            messages=[
-                {'role':'system','content':'Generate a concise course description.'},
-                {'role':'user','content': full_text}
-            ],
-            max_tokens=200
-        ).choices[0].message.content.strip()
-        obj = openai.ChatCompletion.create(
-            model='gpt-3.5-turbo',
-            messages=[
-                {'role':'system','content':'Generate 5–12 clear learning objectives.'},
-                {'role':'user','content': full_text}
-            ],
-            max_tokens=400
-        ).choices[0].message.content.splitlines()
+        # → v1.0+ syntax:  
++        resp = openai.chat.completions.create(
++            model="gpt-3.5-turbo",
++            messages=[
++                {"role":"system","content":"Generate a concise course description."},
++                {"role":"user","content": full_text}
++            ],
++            max_tokens=200
++        )
++        desc = resp.choices[0].message.content.strip()
+# → v1.0+ syntax:
++        resp_obj = openai.chat.completions.create(
++            model="gpt-3.5-turbo",
++            messages=[
++                {"role":"system","content":"Generate 5–12 clear learning objectives."},
++                {"role":"user","content": full_text}
++            ],
++            max_tokens=400
++        )
++        obj = resp_obj.choices[0].message.content.splitlines()
         objectives = [ln.strip('-• ').strip() for ln in obj if ln.strip()]
 
         cfg = {
