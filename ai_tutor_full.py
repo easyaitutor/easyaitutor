@@ -11,28 +11,27 @@ import gradio as gr
 from docx import Document
 import smtplib
 from email.message import EmailMessage
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# ——— Configuration ———
+# —— Configuration ——
 openai.api_key = os.getenv("OPENAI_API_KEY")
 CONFIG_DIR = Path("course_data")
 CONFIG_DIR.mkdir(exist_ok=True)
 
-# ——— SMTP Configuration ———
+# —— SMTP Configuration ——
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT   = int(os.getenv("SMTP_PORT", 587))
 SMTP_USER   = os.getenv("SMTP_USER")
 SMTP_PASS   = os.getenv("SMTP_PASS")
 
-# ——— Constants ———
+# —— Constants ——
 days_map = {
     "Monday": 0, "Tuesday": 1, "Wednesday": 2,
     "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6
 }
 
-# ——— PDF loader ———
+# —— PDF loader ——
 try:
     import fitz  # PyMuPDF
     def load_pdf_text(f):
@@ -52,20 +51,27 @@ except ImportError:
             reader = PdfReader(str(tmp))
         return "".join(p.extract_text() + "\n" for p in reader.pages)
 
-# ——— Helpers ———
+# —— Helpers ——
 def split_sections(pdf_file):
     text = load_pdf_text(pdf_file)
-    headings = list(re.finditer(r"(?m)^(?:CHAPTER|Cap[ií]tulo)\s+.*", text, re.IGNORECASE))
+    headings = list(re.finditer(
+        r"(?m)^(?:CHAPTER|Cap[ií]tulo)\s+.*", text, re.IGNORECASE
+    ))
     if headings:
         sections = []
         for i, h in enumerate(headings):
             start = h.end()
             end = headings[i+1].start() if i+1 < len(headings) else len(text)
-            sections.append({"title": h.group().strip(), "content": text[start:end].strip()})
+            sections.append({
+                "title": h.group().strip(),
+                "content": text[start:end].strip()
+            })
         return sections
     chunks = re.split(r'(?<=[.?!])\s+', text)
-    return [{"title": f"Lesson {i//5+1}", "content": " ".join(chunks[i:i+5]).strip()}
-            for i in range(0, len(chunks), 5)]
+    return [
+        {"title": f"Lesson {i//5+1}", "content": " ".join(chunks[i:i+5]).strip()}
+        for i in range(0, len(chunks), 5)
+    ]
 
 def count_classes(start_date, end_date, weekdays):
     cnt, cur = 0, start_date
@@ -104,34 +110,37 @@ def generate_syllabus(cfg):
     ]
     return "\n".join(header + [""] + body)
 
-# ——— Callbacks ———
-def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
-               sy, sm, sd, ey, em, ed, class_days, students):
+# —— Callbacks ——
+def save_setup(
+    course_name, instr_name, instr_email, devices, pdf_file,
+    sy, sm, sd, ey, em, ed, class_days, students
+):
     try:
-        # Split PDF into sections, then call OpenAI for description + objectives
         sections = split_sections(pdf_file)
-        full_text = "\n\n".join(f"{s['title']}\n{s['content']}" for s in sections)
-        # → v1.0+ syntax:  
-+        resp = openai.chat.completions.create(
-+            model="gpt-3.5-turbo",
-+            messages=[
-+                {"role":"system","content":"Generate a concise course description."},
-+                {"role":"user","content": full_text}
-+            ],
-+            max_tokens=200
-+        )
-+        desc = resp.choices[0].message.content.strip()
-# → v1.0+ syntax:
-+        resp_obj = openai.chat.completions.create(
-+            model="gpt-3.5-turbo",
-+            messages=[
-+                {"role":"system","content":"Generate 5–12 clear learning objectives."},
-+                {"role":"user","content": full_text}
-+            ],
-+            max_tokens=400
-+        )
-+        obj = resp_obj.choices[0].message.content.splitlines()
-        objectives = [ln.strip('-• ').strip() for ln in obj if ln.strip()]
+        full_text = "\n\n".join(
+            f"{s['title']}\n{s['content']}" for s in sections
+        )
+
+        # Generate description
+        resp1 = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role":"system","content":"Generate a concise course description."},
+                {"role":"user",  "content": full_text}
+            ]
+        )
+        desc = resp1.choices[0].message.content.strip()
+
+        # Generate objectives
+        resp2 = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role":"system","content":"Generate 5–12 clear learning objectives."},
+                {"role":"user","content": full_text}
+            ]
+        )
+        obj_lines = resp2.choices[0].message.content.splitlines()
+        objectives = [ln.strip('-• ').strip() for ln in obj_lines if ln.strip()]
 
         cfg = {
             'course_name': course_name,
@@ -140,33 +149,24 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
             'start_date':   f"{sy}-{sm}-{sd}",
             'end_date':     f"{ey}-{em}-{ed}",
             'sections':     sections,
-            'course_description':    desc,
-            'learning_objectives':   objectives
+            'course_description':  desc,
+            'learning_objectives': objectives
         }
-        # Save config
-        path = CONFIG_DIR / f"{course_name.replace(' ', '_').lower()}_config.json"
-        path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding='utf-8')
+        (CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json")\
+            .write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding='utf-8')
 
         syllabus = generate_syllabus(cfg)
-        # Return the UI updates on success
         return (
             gr.update(value=syllabus, visible=True, interactive=False),
-            gr.update(visible=False),  # hide Save Setup button
-            gr.update(visible=True),   # show Edit button
-            gr.update(visible=True),   # show Email button
-            gr.update(visible=True)    # show Status box (empty)
+            gr.update(visible=False),  # hide Save
+            gr.update(visible=True),   # show Edit
+            gr.update(visible=True),   # show Email
+            gr.update(visible=True)    # clear status
         )
 
     except Exception as e:
-        err = traceback.format_exc()
-        # On error, clear preview, re-show Save, hide others, and display the traceback
-        return (
-            gr.update(value="", visible=False, interactive=False),
-            gr.update(visible=True),   # re-show Save Setup
-            gr.update(visible=False),  # hide Edit
-            gr.update(visible=False),  # hide Email
-            gr.update(value=f"⚠️ Error:\n{err}", visible=True)
-        )
+        # show full traceback in output so you can debug
+        return (f"⚠️ Error:\n{traceback.format_exc()}",) + (None,)*4
 
 def enable_edit():
     return gr.update(interactive=True)
@@ -177,7 +177,7 @@ def download_syllabus(course_name, text):
     for line in text.split("\n"):
         doc.add_paragraph(line)
     doc.save(buf); buf.seek(0)
-    fn = f"{course_name.replace(' ', '_').lower()}_syllabus.docx"
+    fn = f"{course_name.replace(' ','_').lower()}_syllabus.docx"
     return buf, fn
 
 def email_syllabus_callback(course_name, instr_name, instr_email, students_text, syllabus_text):
@@ -187,8 +187,8 @@ def email_syllabus_callback(course_name, instr_name, instr_email, students_text,
         recipients = [(instr_name, instr_email)]
         for line in students_text.splitlines():
             if ',' in line:
-                n, e = line.split(',', 1)
-                recipients.append((n.strip(), e.strip()))
+                n,e = line.split(',',1)
+                recipients.append((n.strip(),e.strip()))
 
         for n, e in recipients:
             msg = EmailMessage()
@@ -208,10 +208,11 @@ def email_syllabus_callback(course_name, instr_name, instr_email, students_text,
                 server.send_message(msg)
 
         return gr.update(value="Emails sent successfully!", visible=True)
+
     except Exception:
         return gr.update(value=f"⚠️ Email error:\n{traceback.format_exc()}", visible=True)
 
-# ——— Build the Gradio UI ———
+# —— Build the Gradio UI ——
 def build_ui():
     with gr.Blocks() as demo:
         gr.Markdown("## AI Tutor Instructor Panel")
@@ -224,53 +225,54 @@ def build_ui():
         years    = [str(y) for y in range(2023,2031)]
         months   = [f"{m:02d}" for m in range(1,13)]
         days     = [f"{d:02d}" for d in range(1,32)]
-
         with gr.Row():
             sy = gr.Dropdown(years, label="Start Year")
             sm = gr.Dropdown(months, label="Start Month")
-            sd = gr.Dropdown(days,   label="Start Day")
+            sd = gr.Dropdown(days, label="Start Day")
         with gr.Row():
             ey = gr.Dropdown(years, label="End Year")
             em = gr.Dropdown(months, label="End Month")
-            ed = gr.Dropdown(days,   label="End Day")
-
+            ed = gr.Dropdown(days, label="End Day")
         class_days = gr.CheckboxGroup(list(days_map.keys()), label="Class Days")
         students   = gr.Textbox(label="Students (Name,Email per line)", lines=4)
         output     = gr.Textbox(label="Syllabus Preview", lines=30, interactive=False, visible=False)
-        status     = gr.Textbox(label="Email Status",     lines=2,  interactive=False, visible=False)
+        status     = gr.Textbox(label="Email Status", lines=2, interactive=False, visible=False)
         btn_save   = gr.Button("Save Setup")
-        btn_edit   = gr.Button("Edit",            visible=False)
-        btn_email  = gr.Button("Email Syllabus",  visible=False)
+        btn_edit   = gr.Button("Edit", visible=False)
+        btn_email  = gr.Button("Email Syllabus", visible=False)
 
         btn_save.click(
             save_setup,
-            inputs=[course, instr, email, devices, pdf_file, sy, sm, sd, ey, em, ed, class_days, students],
-            outputs=[output, btn_save, btn_edit, btn_email, status]
+            inputs=[course,instr,email,devices,pdf_file,sy,sm,sd,ey,em,ed,class_days,students],
+            outputs=[output,btn_save,btn_edit,btn_email,status]
         )
         btn_edit.click(enable_edit, inputs=None, outputs=[output])
-        btn_email.click(email_syllabus_callback,
-                        inputs=[course, instr, email, students, output],
-                        outputs=[status])
-
+        btn_email.click(
+            email_syllabus_callback,
+            inputs=[course,instr,email,students,output],
+            outputs=[status]
+        )
     return demo
 
-# ——— FastAPI + Gradio mounting ———
+# —— FastAPI + Gradio mounting ——
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["GET","POST","OPTIONS"],
-    allow_headers=["*"],
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["GET","POST","OPTIONS"], allow_headers=["*"],
 )
 
 gradio_app = build_ui()
+# mount at root `/`
 app = gr.mount_gradio_app(app, gradio_app, path="/")
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    return {"status":"ok"}
 
-# ——— Local dev entrypoint ———
+# —— Local dev entrypoint ——
 if __name__ == "__main__":
-    build_ui().launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
+    build_ui().launch(
+        server_name="0.0.0.0",
+        server_port=int(os.getenv("PORT", 7860))
+    )
