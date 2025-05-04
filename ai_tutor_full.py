@@ -188,7 +188,7 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
             gr.update(value=syl, visible=True, interactive=False),  # output
             gr.update(visible=False),                                # Save Setup
             gr.update(visible=False),                                # Show Syllabus
-            gr.update(visible=True, label="Show Lesson Plan"),     # btn_plan
+            gr.update(visible=True),     # btn_plan
             gr.update(visible=True),                                 # Edit Syllabus
             gr.update(visible=True),                                 # Email Syllabus
             gr.update(visible=False),                                # Edit Lesson Plan
@@ -210,7 +210,7 @@ def show_syllabus_callback(course_name):
             gr.update(value=syl, visible=True, interactive=False),  # output
             gr.update(visible=False),                                # Save Setup
             gr.update(visible=False),                                # Show Syllabus
-            gr.update(visible=has_plan, label="Show Lesson Plan"),  # btn_plan
+            gr.update(visible=has_plan),  # btn_plan
             gr.update(visible=True),                                 # Edit Syllabus
             gr.update(visible=True),                                 # Email Syllabus
             gr.update(visible=False),                                # Edit Lesson Plan
@@ -230,6 +230,19 @@ def generate_plan_callback(course_name, sy, sm, sd, ey, em, ed, class_days):
         else:
             plan = cfg["lesson_plan"]
         return (
+            gr.update(value=plan, visible=True, interactive=False),   # output
+            gr.update(visible=False),                                 # Save Setup
+            gr.update(visible=False),                                 # Show Syllabus
+            gr.update(visible=True),                                  # Show Lesson Plan button
+            gr.update(visible=False),                                 # Edit Syllabus
+            gr.update(visible=False),                                 # Email Syllabus
+            gr.update(visible=True),                                  # Edit Lesson Plan
+            gr.update(visible=True)                                   # Email Lesson Plan
+        )
+    except Exception:
+        return (gr.update(value=f"⚠️ Error:
+{traceback.format_exc()}", visible=True, interactive=False),) + (None,)*7
+
             gr.update(value=plan, visible=True, interactive=False),   # output
             gr.update(visible=False),                                 # Save Setup
             gr.update(visible=False),                                 # Show Syllabus
