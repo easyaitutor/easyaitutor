@@ -221,41 +221,33 @@ def show_syllabus_callback(course_name):
 
 def generate_plan_callback(course_name, sy, sm, sd, ey, em, ed, class_days):
     try:
-        p = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
-        cfg = json.loads(p.read_text(encoding="utf-8"))
+        cfg_path = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        # Generate or retrieve existing lesson plan
         if "lesson_plan" not in cfg:
             plan = generate_plan_by_week(cfg)
             cfg["lesson_plan"] = plan
-            p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         else:
             plan = cfg["lesson_plan"]
         return (
-            gr.update(value=plan, visible=True, interactive=False),   # output
-            gr.update(visible=False),                                 # Save Setup
-            gr.update(visible=False),                                 # Show Syllabus
-            gr.update(visible=True),                                  # Show Lesson Plan button
-            gr.update(visible=False),                                 # Edit Syllabus
-            gr.update(visible=False),                                 # Email Syllabus
-            gr.update(visible=True),                                  # Edit Lesson Plan
-            gr.update(visible=True)                                   # Email Lesson Plan
+            gr.update(value=plan, visible=True, interactive=False),  # output
+            gr.update(visible=False),                                # Save Setup
+            gr.update(visible=False),                                # Show Syllabus
+            gr.update(visible=True),                                 # Show Lesson Plan
+            gr.update(visible=False),                                # Edit Syllabus
+            gr.update(visible=False),                                # Email Syllabus
+            gr.update(visible=True),                                 # Edit Lesson Plan
+            gr.update(visible=True)                                  # Email Lesson Plan
         )
     except Exception:
-        return (gr.update(value=f"⚠️ Error:
-{traceback.format_exc()}", visible=True, interactive=False),) + (None,)*7
-
-            gr.update(value=plan, visible=True, interactive=False),   # output
-            gr.update(visible=False),                                 # Save Setup
-            gr.update(visible=False),                                 # Show Syllabus
-            gr.update(visible=True, label="Show Lesson Plan"),      # btn_plan
-            gr.update(visible=False),                                 # Edit Syllabus
-            gr.update(visible=False),                                 # Email Syllabus
-            gr.update(visible=True),                                  # Edit Lesson Plan
-            gr.update(visible=True)                                   # Email Lesson Plan
+        return (
+            gr.update(value=f"⚠️ Error:
+{traceback.format_exc()}", visible=True, interactive=False),
+            *(None,)*7
         )
-    except Exception:
-        return (gr.update(value=f"⚠️ Error:\n{traceback.format_exc()}", visible=True, interactive=False),) + (None,)*7
 
-def enable_edit_syllabus():
+def enable_edit_syllabus():():
     return gr.update(interactive=True)
 
 def enable_edit_plan():
