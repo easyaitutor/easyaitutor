@@ -30,7 +30,7 @@ SMTP_PASS   = os.getenv("SMTP_PASS")
 days_map = {"Monday": 0, "Tuesday": 1, "Wednesday": 2,
             "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
 
-# ——— PDF loader & Section Splitter (with page numbers) ———
+# ——— PDF loader & Section Splitter ———
 try:
     import fitz  # PyMuPDF
     def split_sections(pdf_file):
@@ -70,6 +70,7 @@ def count_classes(start_date, end_date, weekdays):
         cur += timedelta(days=1)
     return cnt
 
+
 def generate_syllabus(cfg):
     sd = datetime.strptime(cfg['start_date'], '%Y-%m-%d').date()
     ed = datetime.strptime(cfg['end_date'],   '%Y-%m-%d').date()
@@ -80,7 +81,7 @@ def generate_syllabus(cfg):
         f"Professor:   {cfg['instructor']['name']}",
         f"Email:       {cfg['instructor']['email']}",
         f"Duration:    {month_range} ({total} classes)",
-        '_'*60
+        '_' * 60
     ]
     objectives = [f" • {o}" for o in cfg['learning_objectives']]
     body = [
@@ -99,7 +100,7 @@ def generate_syllabus(cfg):
     ]
     return "\n".join(header + [''] + body)
 
-# ——— Lesson Plan Generator (grouped by week) ———
+# ——— Lesson Plan Generator ———
 def generate_plan_by_week(cfg):
     sd = datetime.strptime(cfg['start_date'], '%Y-%m-%d').date()
     ed = datetime.strptime(cfg['end_date'],   '%Y-%m-%d').date()
@@ -116,8 +117,8 @@ def generate_plan_by_week(cfg):
         resp = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role":"system","content":"Summarize this course section in one clear sentence describing the teaching focus."},
-                {"role":"user","content": sec['content']}
+                {"role": "system", "content": "Summarize this course section in one clear sentence describing the teaching focus."},
+                {"role": "user",   "content": sec['content']}
             ],
             temperature=0.7,
             max_tokens=60
@@ -126,42 +127,45 @@ def generate_plan_by_week(cfg):
 
     weeks = {}
     for idx, date in enumerate(dates):
-        week_no = date.isocalendar()[1]
-        summary = summaries[idx] if idx < len(summaries) else 'Topic to be announced.'
-        page = cfg['sections'][idx]['page'] if idx < len(cfg['sections']) else None
-        weeks.setdefault(week_no, []).append((idx+1, date, summary, page))
+        wno = date.isocalendar()[1]
+        summ = summaries[idx] if idx < len(summaries) else 'Topic to be announced.'
+        pg = cfg['sections'][idx]['page'] if idx < len(cfg['sections']) else None
+        weeks.setdefault(wno, []).append((idx + 1, date, summ, pg))
 
-    lines = []
+    out = []
     for wno in sorted(weeks):
-        lines.append(f"## Week {wno}\n")
-        for num, date, summ, page in weeks[wno]:
-            date_str = date.strftime('%B %d, %Y')
-            pg = f" (p. {page})" if page else ''
-            lines.append(f"**Lesson {num} ({date_str}){pg}:** {summ}")
-        lines.append('')
-    return "\n".join(lines)
+        out.append(f"## Week {wno}\n")
+        for num, date, summ, pg in weeks[wno]:
+            dstr = date.strftime('%B %d, %Y')
+            pinfo = f" (p. {pg})" if pg else ''
+            out.append(f"**Lesson {num} ({dstr}){pinfo}:** {summ}")
+        out.append('')
+    return "\n".join(out)
 
 # ——— Callbacks ———
 def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
                sy, sm, sd, ey, em, ed, class_days, students):
     try:
         sections = split_sections(pdf_file)
-        full_text = "\n\n".join(f"{s['title']}\n{s['content']}" for s in sections)
-        resp = openai.chat.completions.create(model="gpt-3.5-turbo",
+        full = "\n\n".join(f"{s['title']}\n{s['content']}" for s in sections)
+        # description
+        r1 = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
             messages=[
-                {"role":"system","content":"Generate a concise course description."},
-                {"role":"user","content": full_text}
+                {"role": "system", "content": "Generate a concise course description."},
+                {"role": "user",   "content": full}
             ]
         )
-        desc = resp.choices[0].message.content.strip()
-        resp2 = openai.chat.completions.create(model="gpt-3.5-turbo",
+        desc = r1.choices[0].message.content.strip()
+        # objectives
+        r2 = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
             messages=[
-                {"role":"system","content":"Generate five to twelve clear learning objectives."},
-                {"role":"user","content": full_text}
+                {"role": "system", "content": "Generate five to twelve clear learning objectives."},
+                {"role": "user",   "content": full}
             ]
         )
-        obj_lines = resp2.choices[0].message.content.splitlines()
-        objectives = [ln.strip(' -•') for ln in obj_lines if ln.strip()]
+        objs = [ln.strip(' -•') for ln in r2.choices[0].message.content.splitlines() if ln.strip()]
         cfg = {
             "course_name": course_name,
             "instructor": {"name": instr_name, "email": instr_email},
@@ -170,64 +174,58 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
             "end_date":   f"{ey}-{em}-{ed}",
             "sections": sections,
             "course_description": desc,
-            "learning_objectives": objectives
+            "learning_objectives": objs
         }
-        path = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
-        path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-        syllabus = generate_syllabus(cfg)
+        p = CONFIG_DIR / f"{course_name.replace(' ', '_').lower()}_config.json"
+        p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        syl = generate_syllabus(cfg)
         return (
-            gr.update(value=syllabus, interactive=False),  # output_box
-            gr.update(visible=False),  # btn_save
-            gr.update(visible=True),   # btn_show_syllabus
-            gr.update(visible=True),   # btn_gen_plan
-            gr.update(visible=False),  # btn_edit_syllabus
-            gr.update(visible=False),  # btn_email_syllabus
-            gr.update(visible=False),  # btn_edit_plan
-            gr.update(visible=False)   # btn_email_plan
+            gr.update(value=syl, interactive=False),
+            gr.update(visible=False),  # save
+            gr.update(visible=True),   # show syl
+            gr.update(visible=True),   # gen plan
+            gr.update(visible=False),  # edit syl
+            gr.update(visible=False),  # email syl
+            gr.update(visible=False),  # edit plan
+            gr.update(visible=False)   # email plan
         )
     except Exception:
         err = f"⚠️ Error:\n{traceback.format_exc()}"
         return (
             gr.update(value=err, interactive=False),
             gr.update(visible=True),
-            gr.update(visible=False),
-            gr.update(visible=False),
-            gr.update(visible=False),
-            gr.update(visible=False),
-            gr.update(visible=False),
-            gr.update(visible=False)
+            *(gr.update(visible=False),)*6
         )
 
 def show_syllabus_callback(course_name):
     try:
-        path = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
-        cfg = json.loads(path.read_text(encoding="utf-8"))
-        syllabus = generate_syllabus(cfg)
+        p = CONFIG_DIR / f"{course_name.replace(' ', '_').lower()}_config.json"
+        cfg = json.loads(p.read_text(encoding="utf-8"))
+        syl = generate_syllabus(cfg)
         return (
-            gr.update(value=syllabus, interactive=False),
+            gr.update(value=syl, interactive=False),
             None, None,
-            gr.update(visible=True),
-            gr.update(visible=True),
+            gr.update(visible=True),  # edit syl
+            gr.update(visible=True),  # email syl
             gr.update(visible=False),
             gr.update(visible=False)
         )
     except Exception:
         return (
-            gr.update(value=f"⚠️ Error loading syllabus:\n{traceback.format_exc()}", interactive=False),
-            None, None, None, None, None, None, None
+            gr.update(value=f"⚠️ Error loading: {traceback.format_exc()}", interactive=False),
+            *(None,)*7
         )
 
 def enable_edit_syllabus():
     return (
         gr.update(interactive=True),
-        None, None, None,
-        None, None, None, None
+        *(None,)*7
     )
 
 def generate_plan_callback(course_name, sy, sm, sd, ey, em, ed, class_days):
     try:
-        path = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
-        cfg = json.loads(path.read_text(encoding="utf-8"))
+        p = CONFIG_DIR / f"{course_name.replace(' ', '_').lower()}_config.json"
+        cfg = json.loads(p.read_text(encoding="utf-8"))
         plan = generate_plan_by_week(cfg)
         return (
             gr.update(value=plan, interactive=False),
@@ -239,31 +237,30 @@ def generate_plan_callback(course_name, sy, sm, sd, ey, em, ed, class_days):
         )
     except Exception:
         return (
-            gr.update(value=f"⚠️ Error generating plan:\n{traceback.format_exc()}", interactive=False),
-            None, None, None, None, None, None, None
+            gr.update(value=f"⚠️ Error plan: {traceback.format_exc()}", interactive=False),
+            *(None,)*6
         )
 
 def enable_edit_plan():
     return (
         gr.update(interactive=True),
-        None, None, None,
-        None, None, None, None
+        *(None,)*7
     )
 
 def email_syllabus_callback(course_name, instr_name, instr_email, students_text, output_text):
     try:
         buf, fn = download_docx(output_text, f"{course_name}_syllabus.docx")
         data = buf.read()
-        recipients = [(instr_name, instr_email)]
+        recs = [(instr_name, instr_email)]
         for ln in students_text.splitlines():
             if ',' in ln:
-                n,e = ln.split(',',1)
-                recipients.append((n.strip(), e.strip()))
-        for n,e in recipients:
+                n, e = ln.split(',', 1)
+                recs.append((n.strip(), e.strip()))
+        for n, e in recs:
             msg = EmailMessage()
             msg["Subject"] = f"Course Syllabus: {course_name}"
-            msg["From"]    = SMTP_USER
-            msg["To"]      = e
+            msg["From"] = SMTP_USER
+            msg["To"] = e
             msg.set_content(f"Hi {n},\n\nAttached is the syllabus for {course_name}.\n\nBest,\nAI Tutor Bot")
             msg.add_attachment(
                 data,
@@ -275,26 +272,118 @@ def email_syllabus_callback(course_name, instr_name, instr_email, students_text,
                 s.starttls()
                 s.login(SMTP_USER, SMTP_PASS)
                 s.send_message(msg)
-        return (
-            gr.update(value="✅ Syllabus emailed!", interactive=False),
-            None, None, None,
-            None, None, None, None
-        )
+        return (gr.update(value="✅ Syllabus emailed!", interactive=False), *(None,)*7)
     except Exception:
-        return (
-            gr.update(value=f"⚠️ Email error:\n{traceback.format_exc()}", interactive=False),
-            None, None, None, None, None, None, None
-        )
+        return (gr.update(value=f"⚠️ Email syl err: {traceback.format_exc()}", interactive=False), *(None,)*7)
 
 def email_plan_callback(course_name, instr_name, instr_email, students_text, output_text):
     try:
         buf, fn = download_docx(output_text, f"{course_name}_lesson_plan.docx")
         data = buf.read()
-        recipients = [(instr_name, instr_email)]
+        recs = [(instr_name, instr_email)]
         for ln in students_text.splitlines():
             if ',' in ln:
-                n,e = ln.split(',',1)
-                recipients.append((n.strip(), e.strip()))
-        for n,e in recipients:
-           msg = EmailMessage()
+                n, e = ln.split(',', 1)
+                recs.append((n.strip(), e.strip()))
+        for n, e in recs:
+            msg = EmailMessage()
             msg["Subject"] = f"Lesson Plan: {course_name}"
+            msg["From"] = SMTP_USER
+            msg["To"] = e
+            msg.set_content(f"Hello {n},\n\nAttached is the lesson plan for {course_name}.\n\nBest,\nAI Tutor Bot")
+            msg.add_attachment(data, maintype="application",
+                               subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
+                               filename=fn)
+            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
+                s.starttls()
+                s.login(SMTP_USER, SMTP_PASS)
+                s.send_message(msg)
+        return ( gr.update(value="✅ Lesson Plan emailed!", interactive=False),*(None,)*7 )
+    except Exception:
+        return ( gr.update(value=f"⚠️ Email plan err: {traceback.format_exc()}", interactive=False),*(None,)*7 )
+
+# ——— Build UI ———
+def build_ui():
+    css = ".small-btn { padding:0.25rem 0.5rem; font-size:0.9rem }"
+    with gr.Blocks(css=css) as demo:
+        gr.Markdown("## AI Tutor Instructor Panel")
+        with gr.Row():
+            course = gr.Textbox(label="Course Name")
+            instr  = gr.Textbox(label="Instructor Name")
+            email  = gr.Textbox(label="Instructor Email")
+        devices  = gr.CheckboxGroup(["phone","pc"], label="Allowed Devices")
+        pdf_file = gr.File(label="Upload PDF (.pdf)",file_types=[".pdf"])
+        years  = [str(y) for y in range(2023, 2031)]
+        months = [f"{m:02d}" for m in range(1,13)]
+        days   = [f"{d:02d}" for d in range(1,32)]
+        with gr.Row():
+            sy = gr.Dropdown(years, label="Start Year")
+            sm = gr.Dropdown(months, label="Start Month")
+            sd = gr.Dropdown(days,   label="Start Day")
+        with gr.Row():
+            ey = gr.Dropdown(years, label="End Year")
+            em = gr.Dropdown(months, label="End Month")
+            ed = gr.Dropdown(days,   label="End Day")
+        class_days = gr.CheckboxGroup(list(days_map.keys()), label="Class Days")
+        students   = gr.Textbox(label="Students (Name,Email per line)", lines=4)
+        output_box = gr.Textbox(label="Output",lines=30,interactive=False,visible=False)
+        with gr.Row():
+            btn_save           = gr.Button("💾", elem_classes=["small-btn"], elem_attributes={"title":"Save Setup"})
+            btn_show_syllabus  = gr.Button("📖", elem_classes=["small-btn"], visible=False, elem_attributes={"title":"Show Syllabus"})
+            btn_gen_plan       = gr.Button("🗒️",elem_classes=["small-btn"],visible=False, elem_attributes={"title":"Generate Lesson Plan"})
+            btn_edit_syllabus  = gr.Button("✏️",elem_classes=["small-btn"],visible=False,elem_attributes={"title":"Edit Syllabus"})
+            btn_email_syllabus = gr.Button("📧",elem_classes=["small-btn"],visible=False,elem_attributes={"title":"Email Syllabus"})
+            btn_edit_plan      = gr.Button("✏️",elem_classes=["small-btn"],visible=False,elem_attributes={"title":"Edit Plan"})
+            btn_email_plan     = gr.Button("📧",elem_classes=["small-btn"],visible=False,elem_attributes={"title":"Email Plan"})
+        btn_save.click(
+            save_setup,
+            inputs=[course,instr,email,devices,pdf_file,sy,sm,sd,ey,em,ed,class_days,students],
+            outputs=[output_box,btn_save,btn_show_syllabus,btn_gen_plan,btn_edit_syllabus,btn_email_syllabus,btn_edit_plan,btn_email_plan]
+        )
+        btn_show_syllabus.click(
+            show_syllabus_callback,
+            inputs=[course],
+            outputs=[output_box,None,None,btn_edit_syllabus,btn_email_syllabus,None,None]
+        )
+        btn_gen_plan.click(
+            generate_plan_callback,
+            inputs=[course,sy,sm,sd,ey,em,ed,class_days],
+            outputs=[output_box,None,None,None,None,btn_edit_plan,btn_email_plan]
+        )
+        btn_edit_syllabus.click(
+            enable_edit_syllabus,
+            [],[output_box]
+        )
+        btn_email_syllabus.click(
+            email_syllabus_callback,
+            inputs=[course,instr,email,students,output_box],
+            outputs=[output_box]
+        )
+        btn_edit_plan.click(
+            enable_edit_plan,
+            [],[output_box]
+        )
+        btn_email_plan.click(
+            email_plan_callback,
+            inputs=[course,instr,email,students,output_box],
+            outputs=[output_box]
+        )
+    return demo
+
+# ——— FastAPI Mount ———
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],allow_credentials=True,
+    allow_methods=["GET","POST","OPTIONS"],allow_headers=["*"],
+)
+
+gradio_app = build_ui()
+app = gr.mount_gradio_app(app, gradio_app, path="/")
+
+@app.get("/healthz")
+def healthz():
+    return {"status":"ok"}
+
+if __name__ == "__main__":
+    build_ui().launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT", 7860)))
