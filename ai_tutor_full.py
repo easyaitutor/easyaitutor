@@ -241,6 +241,7 @@ def generate_plan_callback(course_name, sy, sm, sd, ey, em, ed, class_days):
             gr.update(visible=True)                                  # Email Lesson Plan
         )
     except Exception:
+        # Return error message
         return (
             gr.update(value=f"⚠️ Error:
 {traceback.format_exc()}", visible=True, interactive=False),
