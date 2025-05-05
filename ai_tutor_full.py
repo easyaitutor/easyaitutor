@@ -153,7 +153,7 @@ def generate_plan_by_week(cfg):
         lines.append('')
     return "\n".join(lines)
 
-# Callbacks
+# All Callbacks
 def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
                sy, sm, sd, ey, em, ed, class_days, students):
     try:
