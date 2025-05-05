@@ -58,9 +58,7 @@ try:
         return sections
 except ImportError:
     from PyPDF2 import PdfReader
-    def split_sections(pdf_file):
-        data = pdf_file.read()
-        rdr = PdfReader(pdf_file.name if hasattr(pdf_file, 'name') else io.BytesIO(data))
+    def split_sections(pdf_file):        rdr = PdfReader(pdf_file.name) else io.BytesIO(data))
         text = "\n".join(page.extract_text() or '' for page in rdr.pages)
         chunks = re.split(r'(?<=[.?!])\s+', text)
         return [
