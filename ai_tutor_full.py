@@ -252,7 +252,7 @@ def generate_plan_callback(course_name, sy, sm, sd, ey, em, ed, class_days):
         return (gr.update(value=err, visible=True, interactive=False),) + (None,)*7
 
 
-def enable_edit_syllabus():(): return gr.update(interactive=True)
+def enable_edit_syllabus():():(): return gr.update(interactive=True)
 def enable_edit_plan():     return gr.update(interactive=True)
 
 def email_syllabus_callback(course_name, instr_name, instr_email, students, output):
