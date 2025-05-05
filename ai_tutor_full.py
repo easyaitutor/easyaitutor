@@ -195,7 +195,7 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
             gr.update(value=syl, visible=True, interactive=False),
             gr.update(visible=False),  # Save
             gr.update(visible=False),  # Show Syl
-            gr.update(visible=False),  # Show Plan
+            gr.update(visible=True),   # Show Plan
             gr.update(visible=True),   # Edit Syl
             gr.update(visible=True),   # Email Syl
             gr.update(visible=False),  # Edit Plan
