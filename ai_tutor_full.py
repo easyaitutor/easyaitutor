@@ -234,8 +234,21 @@ def generate_plan_callback(course_name, sy, sm, sd, ey, em, ed, class_days):
             p.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         else:
             plan = cfg["lesson_plan"]
+        # Show syllabus button instead of Show Lesson Plan in this mode
         return (
-            gr.update(value=plan, visible=True, interactive=False),
+            gr.update(value=plan, visible=True, interactive=False),  # output
+            gr.update(visible=False),                                # Save Setup
+            gr.update(visible=True),                                 # Show Syllabus
+            gr.update(visible=False),                                # Show Lesson Plan
+            gr.update(visible=False),                                # Edit Syllabus
+            gr.update(visible=False),                                # Email Syllabus
+            gr.update(visible=True),                                 # Edit Lesson Plan
+            gr.update(visible=True)                                  # Email Lesson Plan
+        )
+    except Exception:
+        err = f"⚠️ Error:
+{traceback.format_exc()}"
+        return (gr.update(value=err, visible=True, interactive=False),) + (None,)*7,
             gr.update(visible=False), gr.update(visible=False),
             gr.update(visible=True),  # Show Plan
             gr.update(visible=False), gr.update(visible=False),
