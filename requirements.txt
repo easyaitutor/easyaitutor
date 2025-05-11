@@ -1,7 +1,13 @@
-fastapi
-gradio
-uvicorn
-python-docx
-PyPDF2
-python-dotenv
 openai
+gradio
+python-docx
+fastapi
+uvicorn[standard]  # [standard] includes websockets and other useful things
+# PyMuPDF or PyPDF2 - choose one or install both if you want the try/except logic
+PyMuPDF # if using fitz
+# PyPDF2 # if using PdfReader as fallback or primary
+APScheduler
+PyJWT
+requests
+python-multipart 
+# Add any other direct dependencies your code might have picked up
