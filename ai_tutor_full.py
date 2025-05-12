@@ -383,8 +383,35 @@ def enable_edit_syllabus_and_reload(current_course_name, current_output_content)
     # Otherwise, just make it interactive
     return gr.update(interactive=True)
 
-def enable_edit_plan():
-    """Makes lesson plan output box editable."""
+def _get_plan_text_from_config(course_name_str):
+    """Helper to fetch formatted lesson plan text from config."""
+    if not course_name_str:
+        return "Error: Course name not available to fetch lesson plan."
+    path = CONFIG_DIR / f"{course_name_str.replace(' ','_').lower()}_config.json"
+    if not path.exists():
+        return f"Error: Config for '{course_name_str}' not found."
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+        plan_text = cfg.get("lesson_plan_formatted")
+        if not plan_text:
+            return "Lesson plan has not been generated yet for this course."
+        return plan_text
+    except Exception as e:
+        return f"Error loading lesson plan from config: {e}"
+
+# Modified enable_edit_plan
+# It now needs the current course name (from course_load_for_plan) and output_plan_box content
+def enable_edit_plan_and_reload(current_course_name_for_plan, current_plan_output_content):
+    """Makes plan output box editable. If it contains status msg, reloads plan."""
+    # Simple check: if it doesn't look like the start of a plan (e.g., "Week"), reload.
+    # This heuristic might need adjustment based on actual plan formatting.
+    # A more robust check could be if it starts with "✅" or "⚠️" (status messages).
+    if not current_plan_output_content.strip().startswith("**Week") and \
+       (current_plan_output_content.strip().startswith("✅") or \
+        current_plan_output_content.strip().startswith("⚠️")):
+        plan_text = _get_plan_text_from_config(current_course_name_for_plan)
+        return gr.update(value=plan_text, interactive=True)
+    # Otherwise, just make it interactive
     return gr.update(interactive=True)
 
 def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, sd_day, ey, em, ed_day, class_days_selected, students_input_str):
@@ -475,9 +502,16 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, 
         return error_return_tuple(f"⚠️ Unexpected Error during setup: {e}")
 
 def generate_plan_callback(course_name_from_input):
-    """Generates lesson plan, saves to config, updates UI."""
-    # Expected outputs: output_plan_box, dummy_btn_save, dummy_btn_show_syllabus, btn_generate_plan, dummy_btn_edit_syl, dummy_btn_email_syl, btn_edit_plan, btn_email_plan
-    num_expected_outputs = 8
+    """Generates lesson plan, saves to config, updates UI. Hides self on success."""
+    # Expected outputs by btn_generate_plan.click in build_ui:
+    # 1. output_plan_box
+    # 2. dummy_btn_save (dummy update)
+    # 3. dummy_btn_show_syllabus (dummy update)
+    # 4. btn_generate_plan (itself - to be hidden on success)
+    # 5. dummy_btn_edit_syl (dummy update)
+    # 6. dummy_btn_email_syl (dummy update)
+    # 7. btn_edit_plan
+    # 8. btn_email_plan
 
     def error_return_for_plan(error_message_str):
         """Returns tuple for error state, matching expected outputs."""
@@ -485,7 +519,7 @@ def generate_plan_callback(course_name_from_input):
             gr.update(value=error_message_str, visible=True, interactive=False), # 1. output_plan_box
             None, # 2. dummy_btn_save
             None, # 3. dummy_btn_show_syllabus
-            gr.update(visible=True), # 4. btn_generate_plan (keep visible)
+            gr.update(visible=True), # 4. btn_generate_plan (keep visible on error)
             None, # 5. dummy_btn_edit_syl
             None, # 6. dummy_btn_email_syl
             gr.update(visible=False), # 7. btn_edit_plan
@@ -503,6 +537,7 @@ def generate_plan_callback(course_name_from_input):
         cfg = json.loads(path.read_text(encoding="utf-8"))
         
         # Generate the plan (both formatted string and structured list)
+        # The core logic for tangible lesson names is within this function using OpenAI summaries
         formatted_plan_str, structured_lessons_list = generate_plan_by_week_structured_and_formatted(cfg)
         
         # Update config with generated plan
@@ -515,7 +550,7 @@ def generate_plan_callback(course_name_from_input):
             gr.update(value=formatted_plan_str, visible=True, interactive=False), # 1. output_plan_box
             None, # 2. dummy_btn_save
             None, # 3. dummy_btn_show_syllabus
-            gr.update(visible=True),  # 4. btn_generate_plan (remains visible)
+            gr.update(visible=False),  # 4. btn_generate_plan (HIDE ON SUCCESS)
             None, # 5. dummy_btn_edit_syl
             None, # 6. dummy_btn_email_syl
             gr.update(visible=True),   # 7. btn_edit_plan (now visible)
@@ -682,11 +717,12 @@ def build_ui():
             outputs=[output_plan_box, plan_buttons_row]
         )
         
+                # ...
         # Edit Plan Button Click
         btn_edit_plan.click(
-            enable_edit_plan, 
-            [], 
-            [output_plan_box]
+            enable_edit_plan_and_reload, # New callback
+            inputs=[course_load_for_plan, output_plan_box], # Pass course name and current plan box content
+            outputs=[output_plan_box]
         )
         
         # Email Plan Button Click
