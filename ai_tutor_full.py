@@ -786,14 +786,15 @@ def build_ui():
 
                 btn_save = gr.Button("1. Save Setup & Generate Syllabus", variant="primary")
                 
-                gr.Markdown("---")
+                gr.Markdown("---") # Separator
                 output_box = gr.Textbox(label="Output (Syllabus / Lesson Plan / Status)", lines=20, interactive=False, visible=False, show_copy_button=True)
                 
                 with gr.Row(visible=False) as syllabus_actions_row:
-                    btn_edit_syl  = gr.Button("Edit Syllabus Text", icon="📝")
-                    btn_email_syl = gr.Button("Email Syllabus", icon="📧", variant="secondary")
+                    # Corrected Button Definitions for Syllabus Actions
+                    btn_edit_syl  = gr.Button(value="📝 Edit Syllabus Text") 
+                    btn_email_syl = gr.Button(value="📧 Email Syllabus", variant="secondary")
                 
-                # Hidden button to trigger showing syllabus if a course name is typed and config exists
+                # Hidden button (can be removed if not actively used for a specific trigger)
                 btn_show_syllabus_hidden = gr.Button("Show Existing Syllabus", visible=False) 
 
             with gr.TabItem("Lesson Plan Management"):
@@ -805,8 +806,101 @@ def build_ui():
 
                 with gr.Row(visible=False) as plan_buttons_row:
                     btn_generate_plan = gr.Button("2. Generate/Re-generate Lesson Plan", variant="primary")
-                    btn_edit_plan = gr.Button("Edit Plan Text", icon="📝")
-                    btn_email_plan= gr.Button("Email Lesson Plan", icon="📧", variant="secondary")
+                    # Corrected Button Definitions for Plan Actions
+                    btn_edit_plan = gr.Button(value="📝 Edit Plan Text")
+                    btn_email_plan= gr.Button(value="📧 Email Lesson Plan", variant="secondary")
+
+        # --- Event Handlers ---
+        # Tab 1: Course Setup & Syllabus
+        btn_save.click(
+            save_setup,
+            inputs=[course,instr,email,devices,pdf_file,sy,sm,sd_day,ey,em,ed_day,class_days_selected,students_input_str],
+            outputs=[output_box, btn_save, btn_show_syllabus_hidden, btn_generate_plan, btn_edit_syl, btn_email_syl, btn_edit_plan, btn_email_plan, syllabus_actions_row, plan_buttons_row, output_plan_box]
+        ).then(
+            lambda: (gr.update(visible=True), gr.update(visible=True)), outputs=[output_box, syllabus_actions_row] # Show output & syllabus actions
+        )
+
+        btn_edit_syl.click(enable_edit_syllabus, [], [output_box])
+        btn_email_syl.click(
+            email_syllabus_callback,
+            inputs=[course, students_input_str, output_box], 
+            outputs=[output_box] 
+        )
+
+        # Tab 2: Lesson Plan Management
+        def load_course_for_plan_ui(course_name_input):
+            try:
+                if not course_name_input: 
+                    return (
+                        gr.update(value="Enter a course name to load.", visible=True), # output_box (Tab 1)
+                        gr.update(visible=False), # syllabus_actions_row (Tab 1)
+                        gr.update(visible=False), # plan_buttons_row (Tab 2)
+                        gr.update(value="", visible=False), # output_plan_box (Tab 2)
+                        gr.update(visible=False), # btn_edit_plan
+                        gr.update(visible=False)  # btn_email_plan
+                    )
+                
+                path = CONFIG_DIR / f"{course_name_input.replace(' ','_').lower()}_config.json"
+                if not path.exists(): 
+                    return (
+                        gr.update(value=f"Config for '{course_name_input}' not found.", visible=True), 
+                        gr.update(visible=False), 
+                        gr.update(visible=False), 
+                        gr.update(value="", visible=False),
+                        gr.update(visible=False),
+                        gr.update(visible=False)
+                    )
+
+                cfg = json.loads(path.read_text(encoding="utf-8"))
+                syllabus_text = generate_syllabus(cfg)
+                plan_text = cfg.get("lesson_plan_formatted", "Lesson plan not generated yet. Click 'Generate/Re-generate Lesson Plan'.")
+                has_plan_data = bool(cfg.get("lessons")) # Check if structured lessons exist
+
+                return (
+                    gr.update(value=syllabus_text, visible=True), 
+                    gr.update(visible=True), 
+                    gr.update(visible=True), 
+                    gr.update(value=plan_text, visible=True),
+                    gr.update(visible=has_plan_data), 
+                    gr.update(visible=has_plan_data)
+                )
+            except Exception as e:
+                tb_str = traceback.format_exc()
+                print(f"Error loading course for plan UI: {e}\n{tb_str}")
+                return (
+                    gr.update(value=f"Error loading course: {e}", visible=True), 
+                    gr.update(visible=False), 
+                    gr.update(visible=False), 
+                    gr.update(value="", visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False)
+                )
+
+        btn_load_course_for_plan.click(
+            load_course_for_plan_ui,
+            inputs=[course_load_for_plan],
+            outputs=[output_box, syllabus_actions_row, plan_buttons_row, output_plan_box, btn_edit_plan, btn_email_plan]
+        )
+
+        btn_generate_plan.click(
+            generate_plan_callback,
+            inputs=[course_load_for_plan], 
+            outputs=[output_plan_box, btn_save, btn_show_syllabus_hidden, btn_generate_plan, btn_edit_syl, btn_email_syl, btn_edit_plan, btn_email_plan]
+        ).then(
+            lambda: (gr.update(visible=True), gr.update(visible=True)), outputs=[output_plan_box, plan_buttons_row]
+        )
+        
+        btn_edit_plan.click(enable_edit_plan, [], [output_plan_box])
+        btn_email_plan.click(
+            email_plan_callback,
+            inputs=[course_load_for_plan, students_input_str, output_plan_box], 
+            outputs=[output_plan_box]
+        )
+        
+        # Link course name input from Tab 1 to Tab 2 for convenience when user types in Tab 1
+        course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
+
+    return demo
 
         # --- Event Handlers ---
         # Tab 1: Course Setup & Syllabus
