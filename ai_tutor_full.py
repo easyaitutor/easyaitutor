@@ -469,7 +469,7 @@ def build_ui():
     with gr.Blocks(theme=gr.themes.Soft()) as demo:
         gr.Markdown("## AI Tutor Instructor Panel")
         with gr.Tabs():
-            with gr.TabItem("Course Setup & Syllabus"):
+            with gr.TabItem("1.Course Setup & Syllabus"):
                 with gr.Row(): course, instr, email = gr.Textbox(label="Course Name*"), gr.Textbox(label="Instructor Name*"), gr.Textbox(label="Instructor Email*", type="email")
                 pdf_file = gr.File(label="Upload Course Material PDF*", file_types=[".pdf"])
                 with gr.Row():
@@ -479,14 +479,14 @@ def build_ui():
                         with gr.Row(): ey, em, ed_day = gr.Dropdown(years, label="End Year*"), gr.Dropdown(months, label="End Month*"), gr.Dropdown(days_list, label="End Day*")
                         class_days_selected = gr.CheckboxGroup(list(days_map.keys()), label="Class Days*")
                     with gr.Column(scale=1): gr.Markdown("#### Student & Access"); devices = gr.CheckboxGroup(["Phone","PC", "Tablet"], label="Allowed Devices", value=["PC"]); students_input_str = gr.Textbox(label="Students (Name,Email per line)", lines=5, placeholder="S. One,s1@ex.com\nS. Two,s2@ex.com")
-                btn_save = gr.Button("1. Save Setup & Generate Syllabus", variant="primary"); gr.Markdown("---")
+                btn_save = gr.Button("Save Setup & Generate Syllabus", variant="primary"); gr.Markdown("---")
                 output_box = gr.Textbox(label="Output", lines=20, interactive=False, visible=False, show_copy_button=True) 
                 with gr.Row(visible=False) as syllabus_actions_row: btn_edit_syl, btn_email_syl = gr.Button(value="📝 Edit Syllabus Text"), gr.Button(value="📧 Email Syllabus", variant="secondary")
             with gr.TabItem("Lesson Plan Management"):
                 gr.Markdown("Enter course name (auto-filled from Tab 1), then generate plan.")
                 course_load_for_plan = gr.Textbox(label="Course Name for Lesson Plan", placeholder="e.g., Introduction to Python")
                 output_plan_box = gr.Textbox(label="Lesson Plan Output", lines=20, interactive=False, visible=False, show_copy_button=True)
-                with gr.Row(visible=False) as plan_buttons_row: btn_generate_plan, btn_edit_plan, btn_email_plan = gr.Button("2. Generate/Re-generate Lesson Plan", variant="primary"), gr.Button(value="📝 Edit Plan Text"), gr.Button(value="📧 Email Lesson Plan", variant="secondary")
+                with gr.Row(visible=False) as plan_buttons_row: btn_generate_plan, btn_edit_plan, btn_email_plan = gr.Button("Generate Lesson Plan", variant="primary"), gr.Button(value="📝 Edit Plan Text"), gr.Button(value="📧 Email Lesson Plan", variant="secondary")
             with gr.TabItem("Contact Support"):
                 gr.Markdown("### Send a Message to Support")
                 with gr.Row(): contact_name, contact_email_addr = gr.Textbox(label="Your Name"), gr.Textbox(label="Your Email Address")
