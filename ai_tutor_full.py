@@ -478,7 +478,7 @@ def check_student_progress_and_notify_professor():
 
 
 # --- All Gradio Callbacks ---
-    def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
+def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
                sy, sm, sd_day, ey, em, ed_day, class_days_selected, students_input_str):
     # Expected outputs from btn_save.click:
     # 1. output_box (Tab 1)
@@ -494,7 +494,8 @@ def check_student_progress_and_notify_professor():
     # 11. output_plan_box (Tab 2)
 
     # Helper for error returns, ensuring all 11 components are addressed
-    def error_return_tuple(error_message_str):
+    def error_return_tuple(error_message_str): # Function definition
+        # THIS IS THE INDENTED BLOCK THAT WAS MISSING OR INCORRECTLY INDENTED
         return (
             gr.update(value=error_message_str, visible=True, interactive=False), # 1. output_box
             gr.update(visible=True),  # 2. btn_save (keep visible to allow retry)
@@ -507,7 +508,7 @@ def check_student_progress_and_notify_professor():
             gr.update(visible=False), # 9. syllabus_actions_row
             gr.update(visible=False), # 10. plan_buttons_row
             gr.update(value="", visible=False) # 11. output_plan_box
-        )
+        ) # End of the indented block for error_return_tuple
 
     try:
         if not all([course_name, instr_name, instr_email, pdf_file, sy, sm, sd_day, ey, em, ed_day, class_days_selected]):
