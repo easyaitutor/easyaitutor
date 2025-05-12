@@ -501,14 +501,66 @@ def build_ui():
         btn_email_plan.click(email_plan_callback, inputs=[course_load_for_plan, students_input_str, output_plan_box], outputs=[output_plan_box])
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
         def handle_contact_submission(name, email_addr, message):
-            if not all([name, email_addr, message]): return gr.update(value="<p style='color:red;'>Error: Name, Email, and Message are required.</p>")
-            if "@" not in email_addr or "." not in email_addr: return gr.update(value="<p style='color:red;'>Error: Please enter a valid email address.</p>")
-            subject, support_recipient_email = f"AI Tutor Panel Contact: {name}", "easyaitutor@gmail.com" 
-            html_body = f"<html><body><h3>New Contact Request</h3><p><strong>Name:</strong> {name}</p><p><strong>Email:</strong> {email_addr}</p><hr><p><strong>Message:</strong></p><p>{message.replace(chr(10), '<br>')}</p></body></html>"
-            success = send_email_notification(support_recipient_email, subject, html_body, name)
-            if success: return (gr.update(value="<p style='color:green;'>Message sent successfully!</p>"), gr.update(value=""), gr.update(value=""), gr.update(value=""))
-            else: return gr.update(value="<p style='color:red;'>Error: Could not send message. Try again later.</p>")
-        btn_send_contact_email.click(handle_contact_submission, inputs=[contact_name, contact_email_addr, contact_message], outputs=[contact_status_output, contact_name, contact_email_addr, contact_message])
+                errors = [] # List to collect validation errors
+
+                # --- Input Validation ---
+                if not name:
+                    errors.append("Name is required.")
+                if not email_addr:
+                    errors.append("Email Address is required.")
+                elif not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email_addr):
+                    errors.append("A valid Email Address is required.")
+                if not message:
+                    errors.append("Message is required.")
+
+                # --- If validation errors exist, display them and stop ---
+                if errors:
+                    error_html = "<p style='color:red;'>Please correct the following errors:<br>" + "<br>".join(f"- {e}" for e in errors) + "</p>"
+                    # Return status update, keep other fields unchanged
+                    return (
+                        gr.update(value=error_html), 
+                        None, # Keep name
+                        None, # Keep email
+                        None  # Keep message
+                    )
+
+                # --- Send Email (only if validation passed) ---
+                subject = f"AI Tutor Panel Contact Form: {name}"
+                support_recipient_email = "easyaitutor@gmail.com" 
+                html_body = f"""
+                <html><body>
+                    <h3>New Contact Request from AI Tutor Panel</h3>
+                    <p><strong>Name:</strong> {name}</p>
+                    <p><strong>Email:</strong> {email_addr}</p>
+                    <hr>
+                    <p><strong>Message:</strong></p>
+                    <p>{message.replace(chr(10), "<br>")}</p> 
+                </body></html>
+                """
+                success = send_email_notification(
+                    to_email=support_recipient_email, 
+                    subject=subject,
+                    html_content=html_body,
+                    student_name=name 
+                )
+
+                # --- Return results ---
+                if success:
+                    # Return success status, clear all input fields
+                    return (
+                        gr.update(value="<p style='color:green;'>Message sent successfully! We will get back to you shortly.</p>"),
+                        gr.update(value=""), # Clear name
+                        gr.update(value=""), # Clear email
+                        gr.update(value="")  # Clear message
+                    )
+                else:
+                    # Return error status, keep input fields unchanged
+                    return (
+                        gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later or contact support directly.</p>"),
+                        None, # Keep name
+                        None, # Keep email
+                        None  # Keep message
+                    )
     return demo
 
 # --- FastAPI Mounting & Main Execution ---
