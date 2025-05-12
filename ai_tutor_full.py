@@ -540,24 +540,94 @@ def build_ui():
         btn_edit_plan.click(enable_edit_plan_and_reload, inputs=[course_load_for_plan, output_plan_box], outputs=[output_plan_box])
         btn_email_plan.click(email_plan_callback, inputs=[course_load_for_plan, students_input_str, output_plan_box], outputs=[output_plan_box])
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
-        def handle_contact_submission(name, email_addr, message):
-            errors = []
-            if not name: errors.append("Name is required.")
-            if not email_addr: errors.append("Email Address is required.")
-            elif not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email_addr): errors.append("A valid Email Address is required.")
-            if not message or message.startswith("Please correct"): errors.append("Message is required.")
-            if errors:
-                error_html = "<p style='color:red;'>Please correct:<br>" + "<br>".join(f"- {e}" for e in errors) + "</p>"
-                return (gr.update(value=error_html), None, None, gr.update(value=message if not message.startswith("Please correct") else "")) # Keep original message if not error
-            yield (gr.update(value="Sending..."), None, None, None)
-            subject, support_recipient_email = f"AI Tutor Panel Contact: {name}", "easyaitutor@gmail.com" 
-            html_body = f"<html><body><h3>New Contact Request</h3><p><strong>Name:</strong> {name}</p><p><strong>Email:</strong> {email_addr}</p><hr><p><strong>Message:</strong></p><p>{message.replace(chr(10), '<br>')}</p></body></html>"
-            success = send_email_notification(support_recipient_email, subject, html_body, name)
-            if success: return (gr.update(value="<p style='color:green;'>Message sent!</p>"), gr.update(value=""), gr.update(value=""), gr.update(value=""))
-            else: return (gr.update(value="<p style='color:red;'>Error sending. Try again.</p>"), None, None, None)
-        btn_send_contact_email.click(handle_contact_submission, inputs=[contact_name, contact_email_addr, contact_message], outputs=[contact_status_output, contact_name, contact_email_addr, contact_message])
-    return demo
+        def handle_contact_submission(name, email_addr, message_content_from_box): # Renamed 'message' to avoid conflict
+                errors = [] # List to collect validation errors
 
+                # --- Input Validation ---
+                if not name:
+                    errors.append("Name is required.")
+                if not email_addr:
+                    errors.append("Email Address is required.")
+                elif not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email_addr):
+                    errors.append("A valid Email Address is required.")
+                
+                # Check if the message box is empty.
+                # We don't need to check if it contains a previous error, because if there are errors,
+                # we will overwrite it with the new error list anyway.
+                if not message_content_from_box:
+                    errors.append("Message is required.")
+
+                # --- If validation errors exist, display them IN THE MESSAGE BOX and stop ---
+                if errors:
+                    # Format errors as plain text for the Textbox
+                    error_text_for_message_box = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
+                    
+                    # Return update for message box, keep other fields unchanged, clear status_output
+                    return (
+                        gr.update(value=""),                 # 1. Clear contact_status_output (Markdown)
+                        None,                                # 2. Keep name field as is
+                        None,                                # 3. Keep email field as is
+                        gr.update(value=error_text_for_message_box) # 4. UPDATE MESSAGE BOX with error text
+                    )
+
+                # --- Send Email (only if validation passed) ---
+                # At this point, message_content_from_box contains the user's actual message.
+                
+                # Update status to "Sending..." (in the Markdown component)
+                # and clear the message box as we are about to send its content.
+                # Keep Name and Email for now.
+                yield (
+                    gr.update(value="<p>Sending...</p>"), 
+                    None, # Keep Name
+                    None, # Keep Email
+                    gr.update(value="") # Clear message box as its content is being processed
+                )
+
+                subject = f"AI Tutor Panel Contact Form: {name}"
+                support_recipient_email = "easyaitutor@gmail.com" 
+                html_body = f"""
+                <html><body>
+                    <h3>New Contact Request from AI Tutor Panel</h3>
+                    <p><strong>Name:</strong> {name}</p>
+                    <p><strong>Email:</strong> {email_addr}</p>
+                    <hr>
+                    <p><strong>Message:</strong></p>
+                    <p>{message_content_from_box.replace(chr(10), "<br>")}</p> 
+                </body></html>
+                """
+                success = send_email_notification(
+                    to_email=support_recipient_email, 
+                    subject=subject,
+                    html_content=html_body,
+                    student_name=name 
+                )
+
+                # --- Return results ---
+                if success:
+                    # Return success status (in status_output), clear all input fields (Name, Email, Message already cleared)
+                    return (
+                        gr.update(value="<p style='color:green;'>Message sent successfully! We will get back to you shortly.</p>"),
+                        gr.update(value=""), # Clear name
+                        gr.update(value=""), # Clear email
+                        gr.update(value="")  # Ensure message box is clear
+                    )
+                else:
+                    # Return error status for sending failure (in status_output)
+                    # Restore the original message to the message box so user can retry/copy.
+                    # Keep Name and Email.
+                    return (
+                        gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later or contact support directly.</p>"),
+                        None, # Keep name
+                        None, # Keep email
+                        gr.update(value=message_content_from_box)  # Restore original message
+                    )
+            
+            # Ensure the .click handler for btn_send_contact_email is:
+            # btn_send_contact_email.click(
+            #     handle_contact_submission,
+            #     inputs=[contact_name, contact_email_addr, contact_message], # contact_message is the Textbox component
+            #     outputs=[contact_status_output, contact_name, contact_email_addr, contact_message] 
+            # )
 # --- FastAPI Mounting & Main Execution ---
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
