@@ -458,7 +458,40 @@ def email_document_callback(course_name, doc_type, output_text_content, students
                     s.login(SMTP_USER, SMTP_PASS)
                     s.send_message(msg)
                 success_count +=1
-            except Exception as e_smtp: error_msg = f"SMTP Error sending to {rec['email']}: {e_smtp}"; print(error_msg); errors.append(error_msg)
+            except smtplib.SMTPRecipientsRefused as e_recipients:
+                # This exception is specifically for when recipients are refused.
+                # Check if the error message indicates an invalid address format.
+                error_str = str(e_recipients).lower()
+                # Keywords indicating an invalid address format or non-existent user
+                invalid_address_keywords = [
+                    "not a valid rfc", "address rejected", "user unknown", 
+                    "no such user", "recipient unknown", "bad recipient",
+                    "invalid mailbox"
+                ]
+                is_invalid_address_error = any(keyword in error_str for keyword in invalid_address_keywords)
+                
+                if is_invalid_address_error:
+                    user_friendly_error = f"Error for {rec['email']}: Please ensure this is a valid email address."
+                    print(f"SMTP Recipient Refused (likely invalid address) for {rec['email']}: {e_recipients}")
+                    errors.append(user_friendly_error)
+                else:
+                    # Other recipient refusal reasons (e.g., mailbox full, policy)
+                    technical_error = f"SMTP Error (Recipient Refused) for {rec['email']}: {e_recipients}"
+                    print(technical_error)
+                    errors.append(technical_error) # Show the more technical error for these cases
+
+            except smtplib.SMTPAuthenticationError as e_auth:
+                auth_error = f"SMTP Authentication Error: Please check sender email credentials. (Failed for {rec['email']})"
+                print(auth_error)
+                errors.append(auth_error)
+                # If auth fails, likely all subsequent emails will fail, so maybe break or handle differently
+                # For now, just append error and continue trying others (if any)
+
+            except Exception as e_smtp: # Catch other general SMTP or network errors
+                general_error = f"SMTP Error sending to {rec['email']}: {e_smtp}"
+                print(general_error)
+                # print(traceback.format_exc()) # For more detailed debugging if needed
+                errors.append(general_error)
         status_message = f"✅ {doc_type.capitalize()} emailed to {success_count} recipient(s)."; status_message += f"\n⚠️ Errors:\n" + "\n".join(errors) if errors else ""
         return gr.update(value=status_message)
     except Exception as e: error_text = f"⚠️ Error emailing {doc_type.lower()}:\n{traceback.format_exc()}"; print(error_text); return gr.update(value=error_text)
