@@ -478,19 +478,46 @@ def check_student_progress_and_notify_professor():
 
 
 # --- All Gradio Callbacks ---
-def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
+    def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
                sy, sm, sd_day, ey, em, ed_day, class_days_selected, students_input_str):
+    # Expected outputs from btn_save.click:
+    # 1. output_box (Tab 1)
+    # 2. btn_save
+    # 3. btn_show_syllabus_hidden (not directly used by user, for internal logic if any)
+    # 4. btn_generate_plan (Tab 2)
+    # 5. btn_edit_syl (Tab 1)
+    # 6. btn_email_syl (Tab 1)
+    # 7. btn_edit_plan (Tab 2)
+    # 8. btn_email_plan (Tab 2)
+    # 9. syllabus_actions_row (Tab 1)
+    # 10. plan_buttons_row (Tab 2)
+    # 11. output_plan_box (Tab 2)
+
+    # Helper for error returns, ensuring all 11 components are addressed
+    def error_return_tuple(error_message_str):
+        return (
+            gr.update(value=error_message_str, visible=True, interactive=False), # 1. output_box
+            gr.update(visible=True),  # 2. btn_save (keep visible to allow retry)
+            gr.update(visible=False), # 3. btn_show_syllabus_hidden
+            gr.update(visible=False), # 4. btn_generate_plan
+            gr.update(visible=False), # 5. btn_edit_syl
+            gr.update(visible=False), # 6. btn_email_syl
+            gr.update(visible=False), # 7. btn_edit_plan
+            gr.update(visible=False), # 8. btn_email_plan
+            gr.update(visible=False), # 9. syllabus_actions_row
+            gr.update(visible=False), # 10. plan_buttons_row
+            gr.update(value="", visible=False) # 11. output_plan_box
+        )
+
     try:
         if not all([course_name, instr_name, instr_email, pdf_file, sy, sm, sd_day, ey, em, ed_day, class_days_selected]):
-            return (gr.update(value="⚠️ Error: All fields (Course Name, Instructor, PDF, Dates, Class Days) are required.", visible=True, interactive=False),
-                    gr.update(visible=True), *(gr.update(visible=False),)*6)
+            return error_return_tuple("⚠️ Error: All fields marked with * (Course Name, Instructor Name, Instructor Email, PDF, Start Date, End Date, Class Days) are required.")
 
         # Ensure pdf_file is processed correctly
         pdf_file_obj = pdf_file # Gradio passes a temp file object
         sections = split_sections(pdf_file_obj)
         if not sections:
-             return (gr.update(value="⚠️ Error: Could not extract any sections from the PDF. Please check the PDF content and structure.", visible=True, interactive=False),
-                    gr.update(visible=True), *(gr.update(visible=False),)*6)
+             return error_return_tuple("⚠️ Error: Could not extract any sections from the PDF. Please check the PDF content and structure. If the PDF is valid, the section splitting logic might need adjustment for this document type.")
 
         full_content_for_ai = "\n\n".join(f"Title: {s['title']}\nContent: {s['content'][:1000]}" for s in sections) # Limit content for AI
         
@@ -541,24 +568,30 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file,
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         
         syllabus_text = generate_syllabus(cfg)
+        # Success case - return all 11 components
         return (
-            gr.update(value=syllabus_text, visible=True, interactive=False),
-            gr.update(visible=False),  # Save Setup
-            gr.update(visible=False),  # Show Syllabus (initially hidden after save)
-            gr.update(visible=True),   # Generate/Show Plan (now available)
-            gr.update(visible=True),   # Edit Syllabus
-            gr.update(visible=True),   # Email Syllabus
-            gr.update(visible=False),  # Edit Plan (initially hidden)
-            gr.update(visible=False)   # Email Plan (initially hidden)
+            gr.update(value=syllabus_text, visible=True, interactive=False), # 1. output_box
+            gr.update(visible=False),  # 2. btn_save (hide after success)
+            gr.update(visible=False),  # 3. btn_show_syllabus_hidden
+            gr.update(visible=True),   # 4. btn_generate_plan (make available in Tab 2)
+            gr.update(visible=True),   # 5. btn_edit_syl
+            gr.update(visible=True),   # 6. btn_email_syl
+            gr.update(visible=False),  # 7. btn_edit_plan (initially hidden in Tab 2)
+            gr.update(visible=False),  # 8. btn_email_plan (initially hidden in Tab 2)
+            gr.update(visible=True),   # 9. syllabus_actions_row (Tab 1)
+            gr.update(visible=True),   # 10. plan_buttons_row (Tab 2)
+            gr.update(value="", visible=False) # 11. output_plan_box (Tab 2, clear and hide initially)
         )
     except openai.APIError as oai_err:
         err_msg = f"⚠️ OpenAI API Error: {oai_err}. Check your API key and quota."
         print(err_msg + f"\n{traceback.format_exc()}")
-        return (gr.update(value=err_msg, visible=True, interactive=False), gr.update(visible=True), *(gr.update(visible=False),)*6)
+        return error_return_tuple(err_msg)
     except Exception:
         err = f"⚠️ Error during setup:\n{traceback.format_exc()}"
         print(err)
-        return (gr.update(value=err, visible=True, interactive=False), gr.update(visible=True), *(gr.update(visible=False),)*6)
+        return error_return_tuple(err)
+
+# The next function, show_syllabus_callback, should start immediately after this.
 
 def show_syllabus_callback(course_name):
     try:
