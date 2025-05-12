@@ -115,25 +115,26 @@ def split_sections(pdf_file_obj_for_sections):
     try:
         from PyPDF2 import PdfReader
         print("Using PyPDF2 for section splitting (basic).")
+        # Ensure pdf_file_obj_for_sections is reset if read by fitz attempt
+        if hasattr(pdf_file_obj_for_sections, "seek"): pdf_file_obj_for_sections.seek(0)
+        
         if hasattr(pdf_file_obj_for_sections, "name"):
             reader = PdfReader(pdf_file_obj_for_sections.name)
         elif isinstance(pdf_file_obj_for_sections, io.BytesIO):
-             pdf_file_obj_for_sections.seek(0)
-             reader = PdfReader(pdf_file_obj_for_sections)
+             reader = PdfReader(pdf_file_obj_for_sections) # PyPDF2 can handle BytesIO directly
         else: # Assuming path string
             reader = PdfReader(str(pdf_file_obj_for_sections))
 
         text = "\n".join(page.extract_text() or '' for page in reader.pages)
         chunks = re.split(r'(?<=[.?!])\s+', text) # Split by sentences
         sections = []
-        # Group N sentences into a "section" for PyPDF2
         sentences_per_section_pypdf2 = 15 
         for i in range(0, len(chunks), sentences_per_section_pypdf2):
             title = f"Content Block {i//sentences_per_section_pypdf2+1}"
             content = " ".join(chunks[i:i+sentences_per_section_pypdf2]).strip()
             if content:
-                sections.append({'title': title, 'content': content, 'page': None}) # Page info hard with PyPDF2
-        if not sections and text.strip(): # If no chunks but text exists
+                sections.append({'title': title, 'content': content, 'page': None})
+        if not sections and text.strip():
             sections.append({'title': 'Full Document Content (PyPDF2)', 'content': text.strip(), 'page': None})
         print(f"DEBUG: split_sections (PyPDF2) created {len(sections)} basic sections for desc/obj.")
         return sections
@@ -211,7 +212,7 @@ def generate_plan_by_week_structured_and_formatted(cfg):
         placeholder_lessons, placeholder_formatted_lines, weeks_for_placeholder = [], [], {}
         for idx, dt_obj in enumerate(class_dates):
             wk_key = f"{dt_obj.isocalendar()[0]}-W{dt_obj.isocalendar()[1]:02d}"
-            lesson_data = {"lesson_number": idx + 1, "date": dt_obj.strftime('%Y-%m-%d'), "topic_summary": "Topic to be determined (No PDF text)", "original_section_title": "N/A", "page_reference": None}
+            lesson_data = {"lesson_number": idx + 1, "date": dt_obj.strftime('%Y-%m-%d'), "topic_summary": "Topic to be determined (No PDF text available)", "original_section_title": "N/A", "page_reference": None}
             placeholder_lessons.append(lesson_data); weeks_for_placeholder.setdefault(wk_key, []).append(lesson_data)
         for wk_key in sorted(weeks_for_placeholder.keys()):
             yr_disp, wk_num_disp = wk_key.split("-W")
@@ -265,9 +266,8 @@ def generate_plan_by_week_structured_and_formatted(cfg):
         formatted_lines.append('')
     return "\n".join(formatted_lines), structured_lessons
 
-# --- APScheduler Setup & Jobs (Identical to previous full version) ---
+# --- APScheduler Setup & Jobs ---
 scheduler = BackgroundScheduler(timezone="UTC")
-# ... (send_daily_class_reminders and check_student_progress_and_notify_professor functions are unchanged) ...
 def send_daily_class_reminders():
     print(f"SCHEDULER: Running daily class reminder job at {datetime.now(dt_timezone.utc)}")
     today_utc = datetime.now(dt_timezone.utc).date()
@@ -333,7 +333,6 @@ def check_student_progress_and_notify_professor():
                     except Exception as e_prog: print(f"SCHEDULER: Error processing progress for {student_name}: {e_prog}")
         except Exception as e_course: print(f"SCHEDULER: Error in progress check for {config_file.name}: {e_course}")
 
-
 # --- Gradio Callbacks ---
 def _get_syllabus_text_from_config(course_name_str):
     if not course_name_str: return "Error: Course name not available."
@@ -367,9 +366,9 @@ def enable_edit_plan_and_reload(current_course_name_for_plan, current_plan_outpu
     return gr.update(interactive=True)
 
 def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, sd_day, ey, em, ed_day, class_days_selected, students_input_str):
-    num_expected_outputs = 11
+    num_expected_outputs = 13 # Updated count
     def error_return_tuple(error_message_str):
-        return (gr.update(value=error_message_str, visible=True, interactive=False), gr.update(visible=True), None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(value="", visible=False))
+        return (gr.update(value=error_message_str, visible=True, interactive=False), gr.update(visible=True), None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(value="", visible=False), gr.update(visible=True), gr.update(visible=False))
     try:
         if not all([course_name, instr_name, instr_email, pdf_file, sy, sm, sd_day, ey, em, ed_day, class_days_selected]): return error_return_tuple("⚠️ Error: All fields marked with * are required.")
         try:
@@ -377,28 +376,37 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, 
             if end_dt <= start_dt: return error_return_tuple("⚠️ Error: End date must be after start date.")
         except ValueError: return error_return_tuple("⚠️ Error: Invalid date selected.")
 
-        sections_for_desc_obj = split_sections(pdf_file) # Pass the Gradio file object
+        sections_for_desc_obj = split_sections(pdf_file)
         if not sections_for_desc_obj or (len(sections_for_desc_obj) == 1 and "Error" in sections_for_desc_obj[0]['title']):
              return error_return_tuple("⚠️ Error: Could not extract structural sections from PDF for analysis.")
 
         full_pdf_text, char_offset_to_page_map, current_char_offset = "", [], 0
-        if fitz_available:
+        fitz_available_for_full_text = fitz_available # Assume fitz can be used unless it fails
+        if fitz_available_for_full_text:
             doc_for_full_text = None
             try:
+                # Reset pdf_file pointer if it was read by split_sections
+                if hasattr(pdf_file, "seek"): pdf_file.seek(0)
                 if hasattr(pdf_file, "name"): doc_for_full_text = fitz.open(pdf_file.name)
                 elif hasattr(pdf_file, "read"):
                     pdf_bytes = pdf_file.read(); pdf_file.seek(0)
                     doc_for_full_text = fitz.open(stream=pdf_bytes, filetype="pdf")
+                
                 if doc_for_full_text:
                     for page_num_fitz, page_obj in enumerate(doc_for_full_text):
-                        page_text = page_obj.get_text()
+                        page_text = page_obj.get_text("text", sort=True) # Get sorted text
                         if page_text: char_offset_to_page_map.append((current_char_offset, page_num_fitz + 1)); full_pdf_text += page_text + "\n"; current_char_offset += len(page_text) + 1
                     doc_for_full_text.close()
-            except Exception as e_fitz_full: print(f"Error extracting full text with fitz: {e_fitz_full}"); fitz_available_for_full_text = False # Mark as failed
-        if not full_pdf_text.strip() and sections_for_desc_obj : # Fallback if fitz failed for full text but PyPDF2 sections exist
-            print("Warning: Fitz failed for full text extraction, using concatenated PyPDF2 sections. Page map will be empty.")
-            full_pdf_text = "\n".join(s['content'] for s in sections_for_desc_obj)
-            char_offset_to_page_map = [] # No reliable page map from PyPDF2 like this
+                else: fitz_available_for_full_text = False # Could not open
+            except Exception as e_fitz_full: print(f"Error extracting full text with fitz: {e_fitz_full}"); fitz_available_for_full_text = False
+        
+        if not fitz_available_for_full_text or not full_pdf_text.strip(): # Fallback or if fitz failed
+            print("Warning: Fitz failed or not used for full text extraction, using concatenated PyPDF2 sections or structural sections. Page map will be empty or less accurate.")
+            # Reset pdf_file pointer again if it was read
+            if hasattr(pdf_file, "seek"): pdf_file.seek(0)
+            full_pdf_text = "\n".join(s['content'] for s in sections_for_desc_obj) # Use content from structural split
+            char_offset_to_page_map = [] # No reliable page map this way
+        
         if not full_pdf_text.strip(): return error_return_tuple("⚠️ Error: Extracted PDF text is empty.")
 
         full_content_for_ai_desc = "\n\n".join(f"Title: {s['title']}\nSnippet: {s['content'][:1000]}" for s in sections_for_desc_obj)
@@ -411,7 +419,7 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, 
         path = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         syllabus_text = generate_syllabus(cfg)
-        return (gr.update(value=syllabus_text, visible=True, interactive=False), gr.update(visible=False), None, gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=True), gr.update(value="", visible=False))
+        return (gr.update(value=syllabus_text, visible=True, interactive=False), gr.update(visible=False), None, gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=True), gr.update(value="", visible=False), gr.update(visible=False), gr.update(visible=True, value=course_name))
     except openai.APIError as oai_err: print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}"); return error_return_tuple(f"⚠️ OpenAI API Error: {oai_err}.")
     except Exception as e: print(f"Error in save_setup: {e}\n{traceback.format_exc()}"); return error_return_tuple(f"⚠️ Error: {e}")
 
@@ -444,19 +452,13 @@ def email_document_callback(course_name, doc_type, output_text_content, students
         for rec in recipients:
             msg = EmailMessage(); msg["Subject"], msg["From"], msg["To"] = f"Course {doc_type.capitalize()}: {course_name}", SMTP_USER, rec["email"]
             msg.set_content(f"Hi {rec['name']},\n\nAttached is {doc_type.lower()} for {course_name}.\n\nBest,\nAI Tutor System"); msg.add_attachment(attachment_data, maintype="application", subtype="vnd.openxmlformats-officedocument.wordprocessingml.document", filename=fn)
-            try:
+            try: 
                 with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
-                    s.starttls()  # Start TLS encryption
-                    s.login(SMTP_USER, SMTP_PASS) # Login to the server
-                    s.send_message(msg) # Send the email message
-                # Increment success_count *after* the 'with' block if successful
-                success_count += 1 
-            except Exception as e_smtp:
-                error_msg = f"SMTP Error sending to {rec['email']}: {e_smtp}"
-                print(error_msg)
-                # Optionally include traceback for more detail in logs
-                # print(traceback.format_exc()) 
-                errors.append(error_msg)
+                    s.starttls()
+                    s.login(SMTP_USER, SMTP_PASS)
+                    s.send_message(msg)
+                success_count +=1
+            except Exception as e_smtp: error_msg = f"SMTP Error sending to {rec['email']}: {e_smtp}"; print(error_msg); errors.append(error_msg)
         status_message = f"✅ {doc_type.capitalize()} emailed to {success_count} recipient(s)."; status_message += f"\n⚠️ Errors:\n" + "\n".join(errors) if errors else ""
         return gr.update(value=status_message)
     except Exception as e: error_text = f"⚠️ Error emailing {doc_type.lower()}:\n{traceback.format_exc()}"; print(error_text); return gr.update(value=error_text)
@@ -469,7 +471,7 @@ def build_ui():
     with gr.Blocks(theme=gr.themes.Soft()) as demo:
         gr.Markdown("## AI Tutor Instructor Panel")
         with gr.Tabs():
-            with gr.TabItem("1.Course Setup & Syllabus"):
+            with gr.TabItem("Course Setup & Syllabus"):
                 with gr.Row(): course, instr, email = gr.Textbox(label="Course Name*"), gr.Textbox(label="Instructor Name*"), gr.Textbox(label="Instructor Email*", type="email")
                 pdf_file = gr.File(label="Upload Course Material PDF*", file_types=[".pdf"])
                 with gr.Row():
@@ -479,21 +481,26 @@ def build_ui():
                         with gr.Row(): ey, em, ed_day = gr.Dropdown(years, label="End Year*"), gr.Dropdown(months, label="End Month*"), gr.Dropdown(days_list, label="End Day*")
                         class_days_selected = gr.CheckboxGroup(list(days_map.keys()), label="Class Days*")
                     with gr.Column(scale=1): gr.Markdown("#### Student & Access"); devices = gr.CheckboxGroup(["Phone","PC", "Tablet"], label="Allowed Devices", value=["PC"]); students_input_str = gr.Textbox(label="Students (Name,Email per line)", lines=5, placeholder="S. One,s1@ex.com\nS. Two,s2@ex.com")
-                btn_save = gr.Button("Save Setup & Generate Syllabus", variant="primary"); gr.Markdown("---")
+                btn_save = gr.Button("1. Save Setup & Generate Syllabus", variant="primary"); gr.Markdown("---")
                 output_box = gr.Textbox(label="Output", lines=20, interactive=False, visible=False, show_copy_button=True) 
                 with gr.Row(visible=False) as syllabus_actions_row: btn_edit_syl, btn_email_syl = gr.Button(value="📝 Edit Syllabus Text"), gr.Button(value="📧 Email Syllabus", variant="secondary")
+            
             with gr.TabItem("Lesson Plan Management"):
-                gr.Markdown("Enter course name (auto-filled from Tab 1), then generate plan.")
-                course_load_for_plan = gr.Textbox(label="Course Name for Lesson Plan", placeholder="e.g., Introduction to Python")
+                lesson_plan_setup_message = gr.Markdown(value="### Course Setup Required\nCourse Setup (on Tab 1) must be completed before generating a Lesson Plan.", visible=True)
+                course_load_for_plan = gr.Textbox(label="Course Name for Lesson Plan", placeholder="e.g., Introduction to Python", visible=False)
                 output_plan_box = gr.Textbox(label="Lesson Plan Output", lines=20, interactive=False, visible=False, show_copy_button=True)
-                with gr.Row(visible=False) as plan_buttons_row: btn_generate_plan, btn_edit_plan, btn_email_plan = gr.Button("Generate Lesson Plan", variant="primary"), gr.Button(value="📝 Edit Plan Text"), gr.Button(value="📧 Email Lesson Plan", variant="secondary")
+                with gr.Row(visible=False) as plan_buttons_row: 
+                    btn_generate_plan = gr.Button("2. Generate/Re-generate Lesson Plan", variant="primary")
+                    btn_edit_plan = gr.Button(value="📝 Edit Plan Text")
+                    btn_email_plan= gr.Button(value="📧 Email Lesson Plan", variant="secondary")
+            
             with gr.TabItem("Contact Support"):
                 gr.Markdown("### Send a Message to Support")
                 with gr.Row(): contact_name, contact_email_addr = gr.Textbox(label="Your Name"), gr.Textbox(label="Your Email Address")
                 contact_message = gr.Textbox(label="Message", lines=5, placeholder="Type your message here..."); btn_send_contact_email = gr.Button("Send Message", variant="primary"); contact_status_output = gr.Markdown(value="")
         
         dummy_btn_1, dummy_btn_2, dummy_btn_3, dummy_btn_4 = gr.Button(visible=False), gr.Button(visible=False), gr.Button(visible=False), gr.Button(visible=False)
-        btn_save.click(save_setup, inputs=[course,instr,email,devices,pdf_file,sy,sm,sd_day,ey,em,ed_day,class_days_selected,students_input_str], outputs=[output_box, btn_save, dummy_btn_1, btn_generate_plan, btn_edit_syl, btn_email_syl, btn_edit_plan, btn_email_plan, syllabus_actions_row, plan_buttons_row, output_plan_box])
+        btn_save.click(save_setup, inputs=[course,instr,email,devices,pdf_file,sy,sm,sd_day,ey,em,ed_day,class_days_selected,students_input_str], outputs=[output_box, btn_save, dummy_btn_1, btn_generate_plan, btn_edit_syl, btn_email_syl, btn_edit_plan, btn_email_plan, syllabus_actions_row, plan_buttons_row, output_plan_box, lesson_plan_setup_message, course_load_for_plan])
         btn_edit_syl.click(enable_edit_syllabus_and_reload, inputs=[course, output_box], outputs=[output_box])
         btn_email_syl.click(email_syllabus_callback, inputs=[course, students_input_str, output_box], outputs=[output_box])
         btn_generate_plan.click(generate_plan_callback, inputs=[course_load_for_plan], outputs=[output_plan_box, dummy_btn_2, dummy_btn_1, btn_generate_plan, dummy_btn_3, dummy_btn_4, btn_edit_plan, btn_email_plan]).then(lambda: (gr.update(visible=True), gr.update(visible=True)), outputs=[output_plan_box, plan_buttons_row])
@@ -501,111 +508,21 @@ def build_ui():
         btn_email_plan.click(email_plan_callback, inputs=[course_load_for_plan, students_input_str, output_plan_box], outputs=[output_plan_box])
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
         def handle_contact_submission(name, email_addr, message):
-                errors = [] # List to collect validation errors
-
-                # --- Input Validation ---
-                if not name:
-                    errors.append("Name is required.")
-                if not email_addr:
-                    errors.append("Email Address is required.")
-                # Use the regex import 're' assumed to be at the top of the file
-                elif not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email_addr):
-                    errors.append("A valid Email Address is required.")
-                # Check if the message box is empty *or* if it currently contains a previous error message
-                # This prevents submitting an error message itself.
-                if not message or message.startswith("Error:") or message.startswith("Please correct"):
-                    errors.append("Message is required.")
-
-                # --- If validation errors exist, display them IN THE MESSAGE BOX and stop ---
-                if errors:
-                    # Format errors as plain text for the Textbox
-                    error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
-                    # Return update for message box, keep other fields unchanged, clear status
-                    return (
-                        gr.update(value=""), # Clear status_output
-                        None,                # Keep name
-                        None,                # Keep email
-                        gr.update(value=error_text) # <<< UPDATE MESSAGE BOX with error text
-                    )
-
-                # --- Send Email (only if validation passed) ---
-                subject = f"AI Tutor Panel Contact Form: {name}"
-                support_recipient_email = "easyaitutor@gmail.com" 
-                html_body = f"""
-                <html><body>
-                    <h3>New Contact Request from AI Tutor Panel</h3>
-                    <p><strong>Name:</strong> {name}</p>
-                    <p><strong>Email:</strong> {email_addr}</p>
-                    <hr>
-                    <p><strong>Message:</strong></p>
-                    <p>{message.replace(chr(10), "<br>")}</p> 
-                </body></html>
-                """
-                # Clear the status message before attempting to send
-                yield (gr.update(value="Sending..."), None, None, None) # Show sending status
-
-                success = send_email_notification(
-                    to_email=support_recipient_email, 
-                    subject=subject,
-                    html_content=html_body,
-                    student_name=name 
-                )
-
-                # --- Return results ---
-                if success:
-                    # Return success status (in status_output), clear all input fields
-                    return (
-                        gr.update(value="<p style='color:green;'>Message sent successfully! We will get back to you shortly.</p>"),
-                        gr.update(value=""), # Clear name
-                        gr.update(value=""), # Clear email
-                        gr.update(value="")  # Clear message
-                    )
-                else:
-                    # Return error status (in status_output), keep input fields unchanged
-                    # Display the sending error in the status area, not the message box
-                    return (
-                        gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later or contact support directly.</p>"),
-                        None, # Keep name
-                        None, # Keep email
-                        None  # Keep message (user might want to copy it)
-                    )
-                # --- Send Email (only if validation passed) ---
-                subject = f"AI Tutor Panel Contact Form: {name}"
-                support_recipient_email = "easyaitutor@gmail.com" 
-                html_body = f"""
-                <html><body>
-                    <h3>New Contact Request from AI Tutor Panel</h3>
-                    <p><strong>Name:</strong> {name}</p>
-                    <p><strong>Email:</strong> {email_addr}</p>
-                    <hr>
-                    <p><strong>Message:</strong></p>
-                    <p>{message.replace(chr(10), "<br>")}</p> 
-                </body></html>
-                """
-                success = send_email_notification(
-                    to_email=support_recipient_email, 
-                    subject=subject,
-                    html_content=html_body,
-                    student_name=name 
-                )
-
-                # --- Return results ---
-                if success:
-                    # Return success status, clear all input fields
-                    return (
-                        gr.update(value="<p style='color:green;'>Message sent successfully! We will get back to you shortly.</p>"),
-                        gr.update(value=""), # Clear name
-                        gr.update(value=""), # Clear email
-                        gr.update(value="")  # Clear message
-                    )
-                else:
-                    # Return error status, keep input fields unchanged
-                    return (
-                        gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later or contact support directly.</p>"),
-                        None, # Keep name
-                        None, # Keep email
-                        None  # Keep message
-                    )
+            errors = []
+            if not name: errors.append("Name is required.")
+            if not email_addr: errors.append("Email Address is required.")
+            elif not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email_addr): errors.append("A valid Email Address is required.")
+            if not message or message.startswith("Please correct"): errors.append("Message is required.")
+            if errors:
+                error_html = "<p style='color:red;'>Please correct:<br>" + "<br>".join(f"- {e}" for e in errors) + "</p>"
+                return (gr.update(value=error_html), None, None, gr.update(value=message if not message.startswith("Please correct") else "")) # Keep original message if not error
+            yield (gr.update(value="Sending..."), None, None, None)
+            subject, support_recipient_email = f"AI Tutor Panel Contact: {name}", "easyaitutor@gmail.com" 
+            html_body = f"<html><body><h3>New Contact Request</h3><p><strong>Name:</strong> {name}</p><p><strong>Email:</strong> {email_addr}</p><hr><p><strong>Message:</strong></p><p>{message.replace(chr(10), '<br>')}</p></body></html>"
+            success = send_email_notification(support_recipient_email, subject, html_body, name)
+            if success: return (gr.update(value="<p style='color:green;'>Message sent!</p>"), gr.update(value=""), gr.update(value=""), gr.update(value=""))
+            else: return (gr.update(value="<p style='color:red;'>Error sending. Try again.</p>"), None, None, None)
+        btn_send_contact_email.click(handle_contact_submission, inputs=[contact_name, contact_email_addr, contact_message], outputs=[contact_status_output, contact_name, contact_email_addr, contact_message])
     return demo
 
 # --- FastAPI Mounting & Main Execution ---
@@ -630,7 +547,7 @@ if __name__ == "__main__":
     print("Starting Gradio UI locally. For production, use Uvicorn.")
     gradio_app_instance.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT",7860)))
     try:
-        while True: time.sleep(2) # Keep main thread alive for scheduler in direct run
+        while True: time.sleep(2)
     except (KeyboardInterrupt, SystemExit):
         print("Shutting down scheduler...")
         if scheduler.running: scheduler.shutdown()
