@@ -60,17 +60,20 @@ def split_sections(pdf_file_obj_for_sections):
     if fitz_available:
         try:
             doc = None
+            # Ensure file pointer is at the beginning if it's a file-like object
+            if hasattr(pdf_file_obj_for_sections, "seek"): pdf_file_obj_for_sections.seek(0)
+
             if hasattr(pdf_file_obj_for_sections, "name"): # Gradio File object
                 doc = fitz.open(pdf_file_obj_for_sections.name)
             elif hasattr(pdf_file_obj_for_sections, "read"): # BytesIO or similar
                 pdf_bytes_sec = pdf_file_obj_for_sections.read()
-                pdf_file_obj_for_sections.seek(0) # Reset pointer
+                pdf_file_obj_for_sections.seek(0) # Reset pointer again after read
                 doc = fitz.open(stream=pdf_bytes_sec, filetype="pdf")
 
             if not doc:
                 raise Exception("Could not open PDF with fitz for section splitting.")
 
-            pages_text = [page.get_text() for page in doc]
+            pages_text = [page.get_text("text", sort=True) for page in doc] # Get sorted text
             doc.close()
             headings = []
             for i, text in enumerate(pages_text):
@@ -84,6 +87,7 @@ def split_sections(pdf_file_obj_for_sections):
                 full_content = "\n".join(pages_text)
                 if full_content.strip():
                      sections.append({'title': 'Full Document Content', 'content': full_content.strip(), 'page': 1})
+                print(f"DEBUG: split_sections (fitz) found no headings, returning {len(sections)} sections.")
                 return sections
 
             for idx, h in enumerate(headings):
@@ -115,18 +119,17 @@ def split_sections(pdf_file_obj_for_sections):
     try:
         from PyPDF2 import PdfReader
         print("Using PyPDF2 for section splitting (basic).")
-        # Ensure pdf_file_obj_for_sections is reset if read by fitz attempt
         if hasattr(pdf_file_obj_for_sections, "seek"): pdf_file_obj_for_sections.seek(0)
         
         if hasattr(pdf_file_obj_for_sections, "name"):
             reader = PdfReader(pdf_file_obj_for_sections.name)
         elif isinstance(pdf_file_obj_for_sections, io.BytesIO):
-             reader = PdfReader(pdf_file_obj_for_sections) # PyPDF2 can handle BytesIO directly
-        else: # Assuming path string
+             reader = PdfReader(pdf_file_obj_for_sections)
+        else: 
             reader = PdfReader(str(pdf_file_obj_for_sections))
 
         text = "\n".join(page.extract_text() or '' for page in reader.pages)
-        chunks = re.split(r'(?<=[.?!])\s+', text) # Split by sentences
+        chunks = re.split(r'(?<=[.?!])\s+', text)
         sections = []
         sentences_per_section_pypdf2 = 15 
         for i in range(0, len(chunks), sentences_per_section_pypdf2):
@@ -366,7 +369,7 @@ def enable_edit_plan_and_reload(current_course_name_for_plan, current_plan_outpu
     return gr.update(interactive=True)
 
 def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, sd_day, ey, em, ed_day, class_days_selected, students_input_str):
-    num_expected_outputs = 13 # Updated count
+    num_expected_outputs = 13 
     def error_return_tuple(error_message_str):
         return (gr.update(value=error_message_str, visible=True, interactive=False), gr.update(visible=True), None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(value="", visible=False), gr.update(visible=True), gr.update(visible=False))
     try:
@@ -381,31 +384,35 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, 
              return error_return_tuple("⚠️ Error: Could not extract structural sections from PDF for analysis.")
 
         full_pdf_text, char_offset_to_page_map, current_char_offset = "", [], 0
-        fitz_available_for_full_text = fitz_available # Assume fitz can be used unless it fails
+        fitz_available_for_full_text = fitz_available 
         if fitz_available_for_full_text:
             doc_for_full_text = None
             try:
-                # Reset pdf_file pointer if it was read by split_sections
                 if hasattr(pdf_file, "seek"): pdf_file.seek(0)
                 if hasattr(pdf_file, "name"): doc_for_full_text = fitz.open(pdf_file.name)
                 elif hasattr(pdf_file, "read"):
                     pdf_bytes = pdf_file.read(); pdf_file.seek(0)
                     doc_for_full_text = fitz.open(stream=pdf_bytes, filetype="pdf")
-                
                 if doc_for_full_text:
                     for page_num_fitz, page_obj in enumerate(doc_for_full_text):
-                        page_text = page_obj.get_text("text", sort=True) # Get sorted text
+                        page_text = page_obj.get_text("text", sort=True) 
                         if page_text: char_offset_to_page_map.append((current_char_offset, page_num_fitz + 1)); full_pdf_text += page_text + "\n"; current_char_offset += len(page_text) + 1
                     doc_for_full_text.close()
-                else: fitz_available_for_full_text = False # Could not open
+                else: fitz_available_for_full_text = False 
             except Exception as e_fitz_full: print(f"Error extracting full text with fitz: {e_fitz_full}"); fitz_available_for_full_text = False
         
-        if not fitz_available_for_full_text or not full_pdf_text.strip(): # Fallback or if fitz failed
-            print("Warning: Fitz failed or not used for full text extraction, using concatenated PyPDF2 sections or structural sections. Page map will be empty or less accurate.")
-            # Reset pdf_file pointer again if it was read
-            if hasattr(pdf_file, "seek"): pdf_file.seek(0)
-            full_pdf_text = "\n".join(s['content'] for s in sections_for_desc_obj) # Use content from structural split
-            char_offset_to_page_map = [] # No reliable page map this way
+        if not fitz_available_for_full_text or not full_pdf_text.strip(): 
+            print("Warning: Fitz failed or not used for full text extraction, using concatenated sections. Page map will be empty or less accurate.")
+            if hasattr(pdf_file, "seek"): pdf_file.seek(0) # Ensure pointer is reset for split_sections if it's re-used
+            # If sections_for_desc_obj was from PyPDF2, it's already concatenated text per "section"
+            # If it was from fitz, it's more structured.
+            # For simplicity, if full_text extraction failed, re-get text from PyPDF2 if fitz isn't primary.
+            if not fitz_available: # If fitz was never available, split_sections already used PyPDF2
+                 temp_sections = split_sections(pdf_file) # This will use PyPDF2
+                 full_pdf_text = "\n".join(s['content'] for s in temp_sections)
+            else: # Fitz was available but failed for full text, use the structural sections
+                 full_pdf_text = "\n".join(s['content'] for s in sections_for_desc_obj)
+            char_offset_to_page_map = [] 
         
         if not full_pdf_text.strip(): return error_return_tuple("⚠️ Error: Extracted PDF text is empty.")
 
@@ -453,45 +460,15 @@ def email_document_callback(course_name, doc_type, output_text_content, students
             msg = EmailMessage(); msg["Subject"], msg["From"], msg["To"] = f"Course {doc_type.capitalize()}: {course_name}", SMTP_USER, rec["email"]
             msg.set_content(f"Hi {rec['name']},\n\nAttached is {doc_type.lower()} for {course_name}.\n\nBest,\nAI Tutor System"); msg.add_attachment(attachment_data, maintype="application", subtype="vnd.openxmlformats-officedocument.wordprocessingml.document", filename=fn)
             try: 
-                with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
-                    s.starttls()
-                    s.login(SMTP_USER, SMTP_PASS)
-                    s.send_message(msg)
+                with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s: s.starttls(); s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
                 success_count +=1
             except smtplib.SMTPRecipientsRefused as e_recipients:
-                # This exception is specifically for when recipients are refused.
-                # Check if the error message indicates an invalid address format.
-                error_str = str(e_recipients).lower()
-                # Keywords indicating an invalid address format or non-existent user
-                invalid_address_keywords = [
-                    "not a valid rfc", "address rejected", "user unknown", 
-                    "no such user", "recipient unknown", "bad recipient",
-                    "invalid mailbox"
-                ]
+                error_str = str(e_recipients).lower(); invalid_address_keywords = ["not a valid rfc", "address rejected", "user unknown", "no such user", "recipient unknown", "bad recipient", "invalid mailbox"]
                 is_invalid_address_error = any(keyword in error_str for keyword in invalid_address_keywords)
-                
-                if is_invalid_address_error:
-                    user_friendly_error = f"Error for {rec['email']}: Please ensure this is a valid email address."
-                    print(f"SMTP Recipient Refused (likely invalid address) for {rec['email']}: {e_recipients}")
-                    errors.append(user_friendly_error)
-                else:
-                    # Other recipient refusal reasons (e.g., mailbox full, policy)
-                    technical_error = f"SMTP Error (Recipient Refused) for {rec['email']}: {e_recipients}"
-                    print(technical_error)
-                    errors.append(technical_error) # Show the more technical error for these cases
-
-            except smtplib.SMTPAuthenticationError as e_auth:
-                auth_error = f"SMTP Authentication Error: Please check sender email credentials. (Failed for {rec['email']})"
-                print(auth_error)
-                errors.append(auth_error)
-                # If auth fails, likely all subsequent emails will fail, so maybe break or handle differently
-                # For now, just append error and continue trying others (if any)
-
-            except Exception as e_smtp: # Catch other general SMTP or network errors
-                general_error = f"SMTP Error sending to {rec['email']}: {e_smtp}"
-                print(general_error)
-                # print(traceback.format_exc()) # For more detailed debugging if needed
-                errors.append(general_error)
+                if is_invalid_address_error: user_friendly_error = f"Error for {rec['email']}: Please ensure this is a valid email address."; print(f"SMTP Recipient Refused (invalid address) for {rec['email']}: {e_recipients}"); errors.append(user_friendly_error)
+                else: technical_error = f"SMTP Error (Recipient Refused) for {rec['email']}: {e_recipients}"; print(technical_error); errors.append(technical_error)
+            except smtplib.SMTPAuthenticationError as e_auth: auth_error = f"SMTP Auth Error: Check sender credentials. (Failed for {rec['email']})"; print(auth_error); errors.append(auth_error)
+            except Exception as e_smtp: general_error = f"SMTP Error sending to {rec['email']}: {e_smtp}"; print(general_error); errors.append(general_error)
         status_message = f"✅ {doc_type.capitalize()} emailed to {success_count} recipient(s)."; status_message += f"\n⚠️ Errors:\n" + "\n".join(errors) if errors else ""
         return gr.update(value=status_message)
     except Exception as e: error_text = f"⚠️ Error emailing {doc_type.lower()}:\n{traceback.format_exc()}"; print(error_text); return gr.update(value=error_text)
@@ -540,94 +517,37 @@ def build_ui():
         btn_edit_plan.click(enable_edit_plan_and_reload, inputs=[course_load_for_plan, output_plan_box], outputs=[output_plan_box])
         btn_email_plan.click(email_plan_callback, inputs=[course_load_for_plan, students_input_str, output_plan_box], outputs=[output_plan_box])
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
-        def handle_contact_submission(name, email_addr, message_content_from_box): # Renamed 'message' to avoid conflict
-                errors = [] # List to collect validation errors
+        
+        def handle_contact_submission(name, email_addr, message_content_from_box):
+            errors = []
+            if not name: errors.append("Name is required.")
+            if not email_addr: errors.append("Email Address is required.")
+            elif not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email_addr): errors.append("A valid Email Address is required.")
+            current_message_is_error = message_content_from_box.startswith("Please correct the following errors:")
+            if not message_content_from_box or current_message_is_error : errors.append("Message is required.")
 
-                # --- Input Validation ---
-                if not name:
-                    errors.append("Name is required.")
-                if not email_addr:
-                    errors.append("Email Address is required.")
-                elif not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email_addr):
-                    errors.append("A valid Email Address is required.")
-                
-                # Check if the message box is empty.
-                # We don't need to check if it contains a previous error, because if there are errors,
-                # we will overwrite it with the new error list anyway.
-                if not message_content_from_box:
-                    errors.append("Message is required.")
+            if errors:
+                error_text_for_message_box = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
+                # If message box previously had an error, clear it. Otherwise, keep user's attempted message (None means no change).
+                message_update_val_on_error = "" if current_message_is_error else None 
+                return (gr.update(value=""), None, None, gr.update(value=error_text_for_message_box if message_update_val_on_error is None else message_update_val_on_error))
 
-                # --- If validation errors exist, display them IN THE MESSAGE BOX and stop ---
-                if errors:
-                    # Format errors as plain text for the Textbox
-                    error_text_for_message_box = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
-                    
-                    # Return update for message box, keep other fields unchanged, clear status_output
-                    return (
-                        gr.update(value=""),                 # 1. Clear contact_status_output (Markdown)
-                        None,                                # 2. Keep name field as is
-                        None,                                # 3. Keep email field as is
-                        gr.update(value=error_text_for_message_box) # 4. UPDATE MESSAGE BOX with error text
-                    )
+            yield (gr.update(value="<p>Sending...</p>"), None, None, gr.update(value=""))
+            subject, support_recipient_email = f"AI Tutor Panel Contact: {name}", "easyaitutor@gmail.com" 
+            html_body = f"<html><body><h3>New Contact Request</h3><p><strong>Name:</strong> {name}</p><p><strong>Email:</strong> {email_addr}</p><hr><p><strong>Message:</strong></p><p>{message_content_from_box.replace(chr(10), '<br>')}</p></body></html>"
+            success = send_email_notification(support_recipient_email, subject, html_body, name)
+            if success:
+                return (gr.update(value="<p style='color:green;'>Message sent successfully!</p>"), gr.update(value=""), gr.update(value=""), gr.update(value=""))
+            else:
+                return (gr.update(value="<p style='color:red;'>Error: Could not send message.</p>"), None, None, gr.update(value=message_content_from_box)) # Restore message on send fail
 
-                # --- Send Email (only if validation passed) ---
-                # At this point, message_content_from_box contains the user's actual message.
-                
-                # Update status to "Sending..." (in the Markdown component)
-                # and clear the message box as we are about to send its content.
-                # Keep Name and Email for now.
-                yield (
-                    gr.update(value="<p>Sending...</p>"), 
-                    None, # Keep Name
-                    None, # Keep Email
-                    gr.update(value="") # Clear message box as its content is being processed
-                )
+        btn_send_contact_email.click(
+            handle_contact_submission,
+            inputs=[contact_name, contact_email_addr, contact_message],
+            outputs=[contact_status_output, contact_name, contact_email_addr, contact_message] 
+        )
+    return demo
 
-                subject = f"AI Tutor Panel Contact Form: {name}"
-                support_recipient_email = "easyaitutor@gmail.com" 
-                html_body = f"""
-                <html><body>
-                    <h3>New Contact Request from AI Tutor Panel</h3>
-                    <p><strong>Name:</strong> {name}</p>
-                    <p><strong>Email:</strong> {email_addr}</p>
-                    <hr>
-                    <p><strong>Message:</strong></p>
-                    <p>{message_content_from_box.replace(chr(10), "<br>")}</p> 
-                </body></html>
-                """
-                success = send_email_notification(
-                    to_email=support_recipient_email, 
-                    subject=subject,
-                    html_content=html_body,
-                    student_name=name 
-                )
-
-                # --- Return results ---
-                if success:
-                    # Return success status (in status_output), clear all input fields (Name, Email, Message already cleared)
-                    return (
-                        gr.update(value="<p style='color:green;'>Message sent successfully! We will get back to you shortly.</p>"),
-                        gr.update(value=""), # Clear name
-                        gr.update(value=""), # Clear email
-                        gr.update(value="")  # Ensure message box is clear
-                    )
-                else:
-                    # Return error status for sending failure (in status_output)
-                    # Restore the original message to the message box so user can retry/copy.
-                    # Keep Name and Email.
-                    return (
-                        gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later or contact support directly.</p>"),
-                        None, # Keep name
-                        None, # Keep email
-                        gr.update(value=message_content_from_box)  # Restore original message
-                    )
-            
-            # Ensure the .click handler for btn_send_contact_email is:
-            # btn_send_contact_email.click(
-            #     handle_contact_submission,
-            #     inputs=[contact_name, contact_email_addr, contact_message], # contact_message is the Textbox component
-            #     outputs=[contact_status_output, contact_name, contact_email_addr, contact_message] 
-            # )
 # --- FastAPI Mounting & Main Execution ---
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
