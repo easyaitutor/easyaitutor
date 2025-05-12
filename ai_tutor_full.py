@@ -88,7 +88,8 @@ try:
             if content.strip():
                 sections.append({'title': h['title'], 'content': content.strip(), 'page': h['page']})
         # Ensure sections are only added if they have meaningful content beyond just the title
-        sections = [s for s in sections if len(s['content']) > len(s['title']) + 5] # Heuristic: content should be longer than title
+        sections = [s for s in sections if len(s['content']) > len(s['title']) + 20] # Slightly increased heuristic
+        print(f"DEBUG: split_sections (fitz) found {len(headings)} headings, returning {len(sections)} usable sections.") # DEBUG LOG
         return sections
 
 except ImportError:
@@ -213,55 +214,86 @@ def generate_plan_by_week_structured_and_formatted(cfg):
             class_dates.append(cur)
         cur += timedelta(days=1)
 
+    print(f"DEBUG: Number of class dates calculated: {len(class_dates)}") # DEBUG LOG
+
     summaries = []
     course_sections = cfg.get('sections', [])
     if not isinstance(course_sections, list): course_sections = []
+    
+    print(f"DEBUG: Number of sections received from config: {len(course_sections)}") # DEBUG LOG
 
     if not course_sections:
         print("Warning: No sections found in config to generate lesson plan summaries.")
-        for _ in class_dates:
-             summaries.append("Topic to be determined (No source material sections found).")
+        for i, dt_obj in enumerate(class_dates): # Iterate through class_dates
+             summaries.append(f"Lesson {i+1}: Topic to be determined (No source material sections).")
     else:
-        for sec_idx in range(len(class_dates)): # Iterate based on number of class dates
-            if sec_idx < len(course_sections): # If there's a corresponding section
-                sec = course_sections[sec_idx]
-                try:
-                    section_content = sec.get('content', '')
-                    if not isinstance(section_content, str): section_content = str(section_content)
-                    if not section_content.strip(): # Skip if section content is empty
-                         summaries.append(f"Review or Practice ({sec.get('title', 'Previous Topic')})")
-                         continue
-
+        # Attempt to generate a summary for each available section first
+        section_summaries_map = {} # Store summaries by original section index
+        for original_sec_idx, sec in enumerate(course_sections):
+            try:
+                section_content = sec.get('content', '')
+                if not isinstance(section_content, str): section_content = str(section_content)
+                
+                # If section content is too short or just the title, use title or a placeholder
+                if not section_content.strip() or len(section_content.strip()) < 50 : # Heuristic for minimal content
+                     summary = f"{sec.get('title', f'Review of Section {original_sec_idx+1}')} (Content too short for AI summary)"
+                     print(f"DEBUG: Section {original_sec_idx} ('{sec.get('title')}') content too short, using title/placeholder.")
+                else:
+                    print(f"DEBUG: Summarizing section {original_sec_idx}: '{sec.get('title', 'Untitled Section')[:50]}...'")
                     resp = openai.chat.completions.create(
                         model="gpt-3.5-turbo",
                         messages=[
-                            {"role":"system","content":"Summarize this section's main topic in one clear sentence suitable for a lesson plan. Be specific."},
-                            {"role":"user","content": section_content[:4000]}
-                        ], temperature=0.6, max_tokens=100
+                        {"role":"system","content":"You are an AI assistant creating a lesson plan topic. Identify the single core concept or skill discussed in the following text. Respond ONLY with a short, concise phrase (max 10-12 words) suitable as a lesson topic title, preferably starting with a gerund (e.g., 'Using verbs', 'Asking questions'). Do NOT use a full sentence."},
+                            {"role":"user","content": section_content[:4000]} # Limit content
+                        ], temperature=0.5, max_tokens=120 # Slightly lower temp, more tokens
                     )
-                    summaries.append(resp.choices[0].message.content.strip())
-                except Exception as e:
-                    print(f"Error generating summary for section {sec_idx} ('{sec.get('title', 'Unknown Title')}'): {e}")
-                    # Fallback: Use the original section title if summary fails
-                    summaries.append(f"{sec.get('title', 'Original Topic Summary Error')}")
-            else: # More class dates than sections
+                    summary = resp.choices[0].message.content.strip()
+                section_summaries_map[original_sec_idx] = summary
+            except openai.APIError as oai_err: # Catch OpenAI specific errors
+                print(f"OpenAI API Error summarizing section {original_sec_idx} ('{sec.get('title', '')}'): {oai_err}")
+                section_summaries_map[original_sec_idx] = f"{sec.get('title', 'Original Topic - OpenAI API Error')}"
+            except Exception as e:
+                print(f"General Error summarizing section {original_sec_idx} ('{sec.get('title', '')}'): {e}")
+                section_summaries_map[original_sec_idx] = f"{sec.get('title', 'Original Topic - Summary Error')}"
+
+        # Now, assign these summaries to class dates
+        current_section_idx_for_assignment = 0
+        for _ in range(len(class_dates)): # Iterate for each class date
+            if current_section_idx_for_assignment < len(course_sections):
+                # We have a section and hopefully its summary
+                summary_to_add = section_summaries_map.get(current_section_idx_for_assignment, 
+                                                           f"{course_sections[current_section_idx_for_assignment].get('title', 'Error retrieving summary')}")
+                summaries.append(summary_to_add)
+                current_section_idx_for_assignment += 1
+            else:
+                # No more unique sections to assign, use placeholder
                 summaries.append("Topic to be announced or class review.")
     
     lessons_by_week = {}
     structured_lessons = []
 
-    for idx, dt_obj in enumerate(class_dates):
+    for idx, dt_obj in enumerate(class_dates): # idx here is the lesson number index (0 to N-1)
         week_number = dt_obj.isocalendar()[1]
         year_of_week = dt_obj.isocalendar()[0] 
         week_key = f"{year_of_week}-W{week_number:02d}"
-        summary_for_lesson = summaries[idx] if idx < len(summaries) else "Topic to be announced."
-        page_num, original_title = None, "N/A"
-        if idx < len(course_sections):
+        
+        summary_for_lesson = summaries[idx] # This summary corresponds to class_dates[idx]
+        
+        page_num, original_title_for_lesson = None, "N/A"
+        # The original_title should correspond to the section that was *actually summarized* for this lesson date
+        # This mapping is now implicit: summaries[idx] was derived from course_sections[idx] (if available)
+        if idx < len(course_sections): # If this lesson date was mapped to an original section
+            original_title_for_lesson = course_sections[idx].get('title', 'N/A')
             page_num = course_sections[idx].get('page')
-            original_title = course_sections[idx].get('title', 'N/A')
+        elif summaries[idx] == "Topic to be announced or class review.":
+             original_title_for_lesson = "General Review / Upcoming Topics"
+
+
         lesson_data = {
-            "lesson_number": idx + 1, "date": dt_obj.strftime('%Y-%m-%d'),
-            "topic_summary": summary_for_lesson, "original_section_title": original_title,
+            "lesson_number": idx + 1, 
+            "date": dt_obj.strftime('%Y-%m-%d'),
+            "topic_summary": summary_for_lesson, 
+            "original_section_title": original_title_for_lesson, # Title of the section used for this lesson
             "page_reference": page_num
         }
         structured_lessons.append(lesson_data)
@@ -270,14 +302,12 @@ def generate_plan_by_week_structured_and_formatted(cfg):
     formatted_lines = []
     for week_key in sorted(lessons_by_week.keys()):
         year_disp, week_num_disp = week_key.split("-W")
-        # Bold Week heading
         formatted_lines.append(f"**Week {week_num_disp} (Year {year_disp})**\n")
         for lesson in lessons_by_week[week_key]:
             ds = datetime.strptime(lesson['date'], '%Y-%m-%d').strftime('%B %d, %Y')
             pstr = f" (Ref. p. {lesson['page_reference']})" if lesson['page_reference'] else ''
-            # Bold Lesson number and Date
             formatted_lines.append(f"**Lesson {lesson['lesson_number']} ({ds})**{pstr}: {lesson['topic_summary']}")
-        formatted_lines.append('') # Keep blank line for spacing
+        formatted_lines.append('')
     
     return "\n".join(formatted_lines), structured_lessons
 
