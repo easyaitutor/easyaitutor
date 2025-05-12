@@ -444,8 +444,19 @@ def email_document_callback(course_name, doc_type, output_text_content, students
         for rec in recipients:
             msg = EmailMessage(); msg["Subject"], msg["From"], msg["To"] = f"Course {doc_type.capitalize()}: {course_name}", SMTP_USER, rec["email"]
             msg.set_content(f"Hi {rec['name']},\n\nAttached is {doc_type.lower()} for {course_name}.\n\nBest,\nAI Tutor System"); msg.add_attachment(attachment_data, maintype="application", subtype="vnd.openxmlformats-officedocument.wordprocessingml.document", filename=fn)
-            try: with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s: s.starttls(); s.login(SMTP_USER, SMTP_PASS); s.send_message(msg); success_count +=1
-            except Exception as e_smtp: error_msg = f"SMTP Error to {rec['email']}: {e_smtp}"; print(error_msg); errors.append(error_msg)
+            try:
+                with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
+                    s.starttls()  # Start TLS encryption
+                    s.login(SMTP_USER, SMTP_PASS) # Login to the server
+                    s.send_message(msg) # Send the email message
+                # Increment success_count *after* the 'with' block if successful
+                success_count += 1 
+            except Exception as e_smtp:
+                error_msg = f"SMTP Error sending to {rec['email']}: {e_smtp}"
+                print(error_msg)
+                # Optionally include traceback for more detail in logs
+                # print(traceback.format_exc()) 
+                errors.append(error_msg)
         status_message = f"✅ {doc_type.capitalize()} emailed to {success_count} recipient(s)."; status_message += f"\n⚠️ Errors:\n" + "\n".join(errors) if errors else ""
         return gr.update(value=status_message)
     except Exception as e: error_text = f"⚠️ Error emailing {doc_type.lower()}:\n{traceback.format_exc()}"; print(error_text); return gr.update(value=error_text)
