@@ -508,22 +508,67 @@ def build_ui():
                     errors.append("Name is required.")
                 if not email_addr:
                     errors.append("Email Address is required.")
+                # Use the regex import 're' assumed to be at the top of the file
                 elif not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", email_addr):
                     errors.append("A valid Email Address is required.")
-                if not message:
+                # Check if the message box is empty *or* if it currently contains a previous error message
+                # This prevents submitting an error message itself.
+                if not message or message.startswith("Error:") or message.startswith("Please correct"):
                     errors.append("Message is required.")
 
-                # --- If validation errors exist, display them and stop ---
+                # --- If validation errors exist, display them IN THE MESSAGE BOX and stop ---
                 if errors:
-                    error_html = "<p style='color:red;'>Please correct the following errors:<br>" + "<br>".join(f"- {e}" for e in errors) + "</p>"
-                    # Return status update, keep other fields unchanged
+                    # Format errors as plain text for the Textbox
+                    error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
+                    # Return update for message box, keep other fields unchanged, clear status
                     return (
-                        gr.update(value=error_html), 
-                        None, # Keep name
-                        None, # Keep email
-                        None  # Keep message
+                        gr.update(value=""), # Clear status_output
+                        None,                # Keep name
+                        None,                # Keep email
+                        gr.update(value=error_text) # <<< UPDATE MESSAGE BOX with error text
                     )
 
+                # --- Send Email (only if validation passed) ---
+                subject = f"AI Tutor Panel Contact Form: {name}"
+                support_recipient_email = "easyaitutor@gmail.com" 
+                html_body = f"""
+                <html><body>
+                    <h3>New Contact Request from AI Tutor Panel</h3>
+                    <p><strong>Name:</strong> {name}</p>
+                    <p><strong>Email:</strong> {email_addr}</p>
+                    <hr>
+                    <p><strong>Message:</strong></p>
+                    <p>{message.replace(chr(10), "<br>")}</p> 
+                </body></html>
+                """
+                # Clear the status message before attempting to send
+                yield (gr.update(value="Sending..."), None, None, None) # Show sending status
+
+                success = send_email_notification(
+                    to_email=support_recipient_email, 
+                    subject=subject,
+                    html_content=html_body,
+                    student_name=name 
+                )
+
+                # --- Return results ---
+                if success:
+                    # Return success status (in status_output), clear all input fields
+                    return (
+                        gr.update(value="<p style='color:green;'>Message sent successfully! We will get back to you shortly.</p>"),
+                        gr.update(value=""), # Clear name
+                        gr.update(value=""), # Clear email
+                        gr.update(value="")  # Clear message
+                    )
+                else:
+                    # Return error status (in status_output), keep input fields unchanged
+                    # Display the sending error in the status area, not the message box
+                    return (
+                        gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later or contact support directly.</p>"),
+                        None, # Keep name
+                        None, # Keep email
+                        None  # Keep message (user might want to copy it)
+                    )
                 # --- Send Email (only if validation passed) ---
                 subject = f"AI Tutor Panel Contact Form: {name}"
                 support_recipient_email = "easyaitutor@gmail.com" 
