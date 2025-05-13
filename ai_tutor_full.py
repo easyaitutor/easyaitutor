@@ -133,14 +133,13 @@ def generate_5_digit_code(): return str(random.randint(10000, 99999))
 def send_email_notification(to_email, subject, html_content, from_name="User", attachment_file_obj=None):
     if not SMTP_USER or not SMTP_PASS:
         print(f"CRITICAL SMTP ERROR: SMTP_USER or SMTP_PASS not configured. Cannot send email to {to_email}.")
-        return False # Explicitly return False
+        return False 
 
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = f"AI Tutor Panel <{SMTP_USER}>" # Use a display name
+    msg["From"] = f"AI Tutor Panel <{SMTP_USER}>" 
     msg["To"] = to_email
-    # If sending a contact form *to yourself*, Reply-To should be the user's email
-    if to_email.lower() == SMTP_USER.lower() and "@" in from_name: # from_name here is the user's email
+    if to_email.lower() == SMTP_USER.lower() and "@" in from_name: 
          msg.add_header('Reply-To', from_name)
 
     msg.add_alternative(html_content, subtype='html')
@@ -151,29 +150,24 @@ def send_email_notification(to_email, subject, html_content, from_name="User", a
                 file_data = fp.read()
             
             ctype, encoding = mimetypes.guess_type(attachment_file_obj.name)
-            if ctype is None or encoding is not None: # If encoding is not None, it's likely text
-                ctype = 'application/octet-stream' # Default for unknown binary
-            maintype, subtype_val = ctype.split('/', 1) # Renamed subtype to avoid conflict
+            if ctype is None or encoding is not None: 
+                ctype = 'application/octet-stream' 
+            maintype, subtype_val = ctype.split('/', 1) 
             
             msg.add_attachment(file_data,
                                maintype=maintype,
-                               subtype=subtype_val, # Use renamed variable
+                               subtype=subtype_val, 
                                filename=os.path.basename(attachment_file_obj.name))
             print(f"Attachment {os.path.basename(attachment_file_obj.name)} prepared for email.")
         except FileNotFoundError:
             print(f"Error attaching file: File not found at {attachment_file_obj.name}")
-            # Optionally, you could decide to send the email without the attachment or fail here.
-            # For now, let's try to send without if attachment fails this way.
-            # To make it fail, return False here:
-            # return False 
         except Exception as e_attach:
             print(f"Error processing attachment {attachment_file_obj.name}: {e_attach}")
-            # return False # Optionally fail if attachment processing fails
 
     try:
         print(f"Attempting to send email to {to_email} via {SMTP_SERVER}:{SMTP_PORT} as {SMTP_USER}...")
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as s: # Added timeout
-            s.set_debuglevel(1) # Enable SMTP debug output to console
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as s: 
+            s.set_debuglevel(0) # Set to 1 for verbose SMTP logs, 0 for production
             s.starttls()
             s.login(SMTP_USER, SMTP_PASS)
             s.send_message(msg)
@@ -188,10 +182,10 @@ def send_email_notification(to_email, subject, html_content, from_name="User", a
     except smtplib.SMTPServerDisconnected as e_disconn:
         print(f"SMTP Server Disconnected: {e_disconn}\n{traceback.format_exc()}")
         return False
-    except smtplib.SMTPException as e_smtp_general: # Catch other specific SMTP errors
+    except smtplib.SMTPException as e_smtp_general: 
         print(f"General SMTP Exception sending to {to_email}: {e_smtp_general}\n{traceback.format_exc()}")
         return False
-    except Exception as e: # Catch any other unexpected errors
+    except Exception as e: 
         print(f"Unexpected error sending email to {to_email}: {e}\n{traceback.format_exc()}")
         return False
 
@@ -261,7 +255,7 @@ def generate_plan_by_week_structured_and_formatted(cfg):
     return "\n".join(formatted_lines), structured_lessons
 
 # --- APScheduler Setup ---
-scheduler = BackgroundScheduler(timezone="UTC") # DEFINED GLOBALLY
+scheduler = BackgroundScheduler(timezone="UTC") 
 
 # --- Scheduler Jobs ---
 def send_daily_class_reminders():
@@ -423,34 +417,18 @@ def generate_plan_callback(course_name_from_input):
         cfg = json.loads(path.read_text(encoding="utf-8"))
         formatted_plan_str, structured_lessons_list = generate_plan_by_week_structured_and_formatted(cfg)
         
-        cfg["lessons"] = structured_lessons_list # This is crucial for the scheduler
+        cfg["lessons"] = structured_lessons_list 
         cfg["lesson_plan_formatted"] = formatted_plan_str
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        # --- ADDED NOTIFICATION MESSAGE LOGIC ---
-        class_days_str = ", ".join(cfg.get("class_days", ["configured schedule"])) # Get class days from cfg
-
-        notification_message = (
-            f"\n\n---\n"
-            f"✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
+        class_days_str = ", ".join(cfg.get("class_days", ["configured schedule"])) 
+        notification_message = (f"\n\n---\n✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
             f"Students in this course will now receive emails with a unique link "
             f"to their AI Tutor lesson on each scheduled class day ({class_days_str}). "
-            f"Links are active from 6 AM to 12 PM UTC on those days."
-        )
+            f"Links are active from 6 AM to 12 PM UTC on those days.")
         display_text_for_plan_box = formatted_plan_str + notification_message
-        # --- END ADDED NOTIFICATION MESSAGE LOGIC ---
         
-        # Updated success return:
-        return (
-            gr.update(value=display_text_for_plan_box, visible=True, interactive=False), # 1. output_plan_box (now includes notification)
-            None, # 2. dummy_btn_save
-            None, # 3. dummy_btn_show_syllabus
-            gr.update(visible=False),  # 4. btn_generate_plan (HIDE ON SUCCESS)
-            None, # 5. dummy_btn_edit_syl
-            None, # 6. dummy_btn_email_syl
-            gr.update(visible=True),   # 7. btn_edit_plan (now visible)
-            gr.update(visible=True)    # 8. btn_email_plan (now visible)
-        )
+        return (gr.update(value=display_text_for_plan_box, visible=True, interactive=False), None, None, gr.update(visible=False), None, None, gr.update(visible=True), gr.update(visible=True)) 
     except openai.APIError as oai_err: print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}"); return error_return_for_plan(f"⚠️ OpenAI API Error: {oai_err}.")
     except Exception as e: print(f"Error in generate_plan_callback: {e}\n{traceback.format_exc()}"); return error_return_for_plan(f"⚠️ Error: {e}")
 
@@ -521,7 +499,7 @@ def build_ui():
                 contact_message = gr.Textbox(label="Message", lines=5, placeholder="Type your message here...")
                 contact_attachment = gr.File(label="Attach File (Optional)", file_count="single")
                 btn_send_contact_email = gr.Button("Send Message", variant="primary")
-                contact_status_output = gr.Markdown(value="") # For status messages like "Sending...", "Sent!", "Error..."
+                contact_status_output = gr.Markdown(value="")
         
         # --- Event Handlers ---
         dummy_btn_1, dummy_btn_2, dummy_btn_3, dummy_btn_4 = gr.Button(visible=False), gr.Button(visible=False), gr.Button(visible=False), gr.Button(visible=False)
@@ -534,20 +512,28 @@ def build_ui():
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
         
         # --- Contact Form Callback Definition (Correctly Indented within build_ui) ---
-def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
+        def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
             errors = []
             if not name.strip(): errors.append("Name is required.")
             if not email_addr.strip(): errors.append("Email Address is required.")
             elif "@" not in email_addr: errors.append("A valid Email Address (containing '@') is required.")
-            if not message_content_from_box.strip(): errors.append("Message is required.")
+            
+            if not message_content_from_box.strip(): 
+                errors.append("Message is required.")
 
             if errors:
                 error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
-                return (gr.update(value=""), None, None, gr.update(value=error_text), None)
+                # Update contact_message (the Textbox) with the error, clear status_output, keep name/email, keep attachment
+                return (
+                    gr.update(value=""),  # 1. Clear contact_status_output (Markdown)
+                    None,                 # 2. Keep name field as is
+                    None,                 # 3. Keep email field as is
+                    gr.update(value=error_text), # 4. UPDATE MESSAGE BOX with error text
+                    None                  # 5. Keep attachment as is
+                )
 
-            # --- Show Sending Status ---
+            # --- Send Email (only if validation passed) ---
             # This yield updates the UI and then the function continues.
-            # The outputs must match the .click handler's outputs list.
             yield (
                 gr.update(value="<p><i>Sending message... Please wait.</i></p>"), # contact_status_output
                 None, # contact_name (no change)
@@ -558,7 +544,6 @@ def handle_contact_submission(name, email_addr, message_content_from_box, attach
             
             time.sleep(0.1) # Small delay to ensure Gradio processes the yield update
 
-            # --- Attempt to Send Email ---
             try:
                 subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
                 to_support_email = "easyaitutor@gmail.com" 
@@ -593,17 +578,14 @@ def handle_contact_submission(name, email_addr, message_content_from_box, attach
                     )
                 else: 
                     print("Contact email sending failed (send_email_notification returned False).")
-                    # If send_email_notification returned False, it means an error occurred there.
-                    # The specific error should have been printed by send_email_notification.
                     return (
                         gr.update(value="<p style='color:red;'>Error: Could not send message. SMTP issue or attachment error. Please check server logs.</p>"), 
                         None, 
                         None, 
-                        gr.update(value=message_content_from_box), # Restore message
-                        attachment_file # Keep attachment
+                        gr.update(value=message_content_from_box), 
+                        attachment_file 
                     )
             except Exception as e_handler:
-                # Catch any unexpected error within this try block of handle_contact_submission
                 print(f"Unexpected error in handle_contact_submission after yield: {e_handler}\n{traceback.format_exc()}")
                 return (
                         gr.update(value=f"<p style='color:red;'>Critical Error: An unexpected issue occurred: {e_handler}.</p>"), 
@@ -613,13 +595,14 @@ def handle_contact_submission(name, email_addr, message_content_from_box, attach
                         attachment_file
                     )
 
+        # --- Attach the callback to the button (CORRECTLY INDENTED) ---
         btn_send_contact_email.click(
-        handle_contact_submission,
-        inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
-        outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment] 
-    )
-# End of with gr.Blocks() as demo:
-return demo
+            handle_contact_submission,
+            inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
+            outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment] 
+        )
+    # End of with gr.Blocks() as demo:
+    return demo
 
 # --- FastAPI Mounting & Main Execution ---
 app = FastAPI()
@@ -647,8 +630,6 @@ async def shutdown_event():
 gradio_app_instance = build_ui()
 if gradio_app_instance is None:
     print("ERROR: build_ui() returned None. Gradio app cannot be mounted.")
-    # Consider raising an error or exiting if this is critical
-    # raise ValueError("build_ui() failed to return a Gradio Blocks instance.")
 else:
     app = gr.mount_gradio_app(app, gradio_app_instance, path="/")
 
