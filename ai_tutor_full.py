@@ -456,82 +456,69 @@ def build_ui():
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
         
        
+        # ——— Contact callback (nested inside build_ui) ———
     def handle_contact_submission(name, email_addr, message_content, attachment_file):
-    errors = []
+        errors = []
+        if not name.strip():
+            errors.append("Name is required.")
+        if not email_addr.strip():
+            errors.append("Email Address is required.")
+        elif "@" not in email_addr:
+            errors.append("A valid Email Address (containing '@') is required.")
+        if not message_content.strip():
+            errors.append("Message is required.")
 
-    if not name.strip():
-        errors.append("Name is required.")
-    if not email_addr.strip():
-        errors.append("Email Address is required.")
-    elif "@" not in email_addr:
-        errors.append("A valid Email Address (containing '@') is required.")
-    if not message_content.strip():
-        errors.append("Message is required.")
+        if errors:
+            error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
+            return (
+                gr.update(value=error_text),  # status
+                None, None, None, None         # leave all inputs unchanged
+            )
 
-    if errors:
-        error_text = (
-            "Please correct the following errors:\n"
-            + "\n".join(f"- {e}" for e in errors)
+        subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
+        html_body = (
+            "<html><body>"
+            "<h3>Contact Request</h3>"
+            f"<p><b>Name:</b> {name}</p>"
+            f"<p><b>Email:</b> {email_addr}</p><hr>"
+            "<p><b>Message:</b></p>"
+            f"<p>{message_content.replace(chr(10), '<br>')}</p>"
+            "</body></html>"
         )
-        return (
-            gr.update(value=error_text),  # status output
-            None,  # leave name unchanged
-            None,  # leave email unchanged
-            None,  # leave message unchanged
-            None,  # leave attachment unchanged
-        )
-
-    subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
-    html_body = (
-        "<html><body>"
-        "<h3>Contact Request</h3>"
-        f"<p><b>Name:</b> {name}</p>"
-        f"<p><b>Email:</b> {email_addr}</p><hr>"
-        "<p><b>Message:</b></p>"
-        f"<p>{message_content.replace(chr(10), '<br>')}</p>"
-        "</body></html>"
-    )
-    success = send_email_notification(
-        "easyaitutor@gmail.com",
-        subject,
-        html_body,
-        email_addr,
-        attachment_file,
-    )
-
-    if success:
-        return (
-            gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
-            gr.update(value=""),       # clear name
-            gr.update(value=""),       # clear email
-            gr.update(value=""),       # clear message
-            gr.update(value=None),     # clear attachment
-        )
-    else:
-        return (
-            gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later.</p>"),
-            None,                      # leave name
-            None,                      # leave email
-            gr.update(value=message_content),  # restore message
-            None,                      # leave attachment
+        success = send_email_notification(
+            "easyaitutor@gmail.com",
+            subject,
+            html_body,
+            email_addr,
+            attachment_file,
         )
 
-with gr.Blocks() as demo:
-    contact_name       = gr.Textbox(label="Name")
-    contact_email_addr = gr.Textbox(label="Email Address")
-    contact_message    = gr.Textbox(label="Message")
-    contact_attachment = gr.File(label="Attachment (optional)")
-    contact_status     = gr.HTML()
+        if success:
+            return (
+                gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
+                gr.update(value=""),  # clear name
+                gr.update(value=""),  # clear email
+                gr.update(value=""),  # clear message
+                gr.update(value=None) # clear attachment
+            )
+        else:
+            return (
+                gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later.</p>"),
+                None,                                 # leave name
+                None,                                 # leave email
+                gr.update(value=message_content),     # restore message
+                None                                  # leave attachment
+            )
 
-    btn_send = gr.Button("Send")
-    btn_send.click(
+    # Hook it up to your button
+    btn_send_contact_email.click(
         handle_contact_submission,
         inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
-        outputs=[contact_status,   contact_name,
-                 contact_email_addr, contact_message,
-                 contact_attachment]
+        outputs=[contact_status_output,
+                 contact_name, contact_email_addr,
+                 contact_message, contact_attachment]
     )
-    return demo
+  return demo
 
 # --- FastAPI Mounting & Main Execution ---
 app = FastAPI()
