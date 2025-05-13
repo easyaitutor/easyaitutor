@@ -299,7 +299,7 @@ def _get_plan_text_from_config(course_name_str):
     except Exception as e: return f"Error loading plan: {e}"
 
 def enable_edit_syllabus_and_reload(current_course_name, current_output_content):
-    if not current_output_content.strip().startswith("Course:"): # Adjusted to match new syllabus format
+    if not current_output_content.strip().startswith("Course:"): 
         syllabus_text = _get_syllabus_text_from_config(current_course_name)
         return gr.update(value=syllabus_text, interactive=True)
     return gr.update(interactive=True)
@@ -443,9 +443,15 @@ def build_ui():
             
             with gr.TabItem("Contact Support"):
                 gr.Markdown("### Send a Message to Support")
-                with gr.Row(): contact_name, contact_email_addr = gr.Textbox(label="Your Name"), gr.Textbox(label="Your Email Address")
-                contact_message = gr.Textbox(label="Message", lines=5, placeholder="Type your message here..."); contact_attachment = gr.File(label="Attach File (Optional)", file_count="single"); btn_send_contact_email = gr.Button("Send Message", variant="primary"); contact_status_output = gr.Markdown(value="")
+                with gr.Row(): 
+                    contact_name = gr.Textbox(label="Your Name")
+                    contact_email_addr = gr.Textbox(label="Your Email Address")
+                contact_message = gr.Textbox(label="Message", lines=5, placeholder="Type your message here...")
+                contact_attachment = gr.File(label="Attach File (Optional)", file_count="single")
+                btn_send_contact_email = gr.Button("Send Message", variant="primary")
+                contact_status_output = gr.Markdown(value="") # For status messages like "Sending...", "Sent!", "Error..."
         
+        # --- Event Handlers ---
         dummy_btn_1, dummy_btn_2, dummy_btn_3, dummy_btn_4 = gr.Button(visible=False), gr.Button(visible=False), gr.Button(visible=False), gr.Button(visible=False)
         btn_save.click(save_setup, inputs=[course,instr,email,devices,pdf_file,sy,sm,sd_day,ey,em,ed_day,class_days_selected,students_input_str], outputs=[output_box, btn_save, dummy_btn_1, btn_generate_plan, btn_edit_syl, btn_email_syl, btn_edit_plan, btn_email_plan, syllabus_actions_row, plan_buttons_row, output_plan_box, lesson_plan_setup_message, course_load_for_plan])
         btn_edit_syl.click(enable_edit_syllabus_and_reload, inputs=[course, output_box], outputs=[output_box])
@@ -455,70 +461,82 @@ def build_ui():
         btn_email_plan.click(email_plan_callback, inputs=[course_load_for_plan, students_input_str, output_plan_box], outputs=[output_plan_box])
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
         
-       
-        # ——— Contact callback (nested inside build_ui) ———
-    def handle_contact_submission(name, email_addr, message_content, attachment_file):
-        errors = []
-        if not name.strip():
-            errors.append("Name is required.")
-        if not email_addr.strip():
-            errors.append("Email Address is required.")
-        elif "@" not in email_addr:
-            errors.append("A valid Email Address (containing '@') is required.")
-        if not message_content.strip():
-            errors.append("Message is required.")
+        # --- Contact Form Callback Definition (Correctly Indented within build_ui) ---
+        def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
+            errors = []
+            if not name.strip(): errors.append("Name is required.")
+            if not email_addr.strip(): errors.append("Email Address is required.")
+            elif "@" not in email_addr: errors.append("A valid Email Address (containing '@') is required.")
+            
+            if not message_content_from_box.strip(): 
+                errors.append("Message is required.")
 
-        if errors:
-            error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
-            return (
-                gr.update(value=error_text),  # status
-                None, None, None, None         # leave all inputs unchanged
+            if errors:
+                error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
+                # Update contact_message (the Textbox) with the error, clear status_output, keep name/email, keep attachment
+                return (
+                    gr.update(value=""),  # 1. Clear contact_status_output (Markdown)
+                    None,                 # 2. Keep name field as is
+                    None,                 # 3. Keep email field as is
+                    gr.update(value=error_text), # 4. UPDATE MESSAGE BOX with error text
+                    None                  # 5. Keep attachment as is
+                )
+
+            # --- Send Email (only if validation passed) ---
+            yield (
+                gr.update(value="<p>Sending...</p>"), # To contact_status_output
+                None, # Keep Name
+                None, # Keep Email
+                gr.update(value=""), # Clear message box
+                None  # Keep attachment for now
             )
 
-        subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
-        html_body = (
-            "<html><body>"
-            "<h3>Contact Request</h3>"
-            f"<p><b>Name:</b> {name}</p>"
-            f"<p><b>Email:</b> {email_addr}</p><hr>"
-            "<p><b>Message:</b></p>"
-            f"<p>{message_content.replace(chr(10), '<br>')}</p>"
-            "</body></html>"
+            subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
+            to_support_email = "easyaitutor@gmail.com" 
+            html_body = f"""
+            <html><body>
+                <h3>New Contact Request from AI Tutor Panel</h3>
+                <p><strong>Name:</strong> {name}</p>
+                <p><strong>Email (for reply):</strong> {email_addr}</p>
+                <hr>
+                <p><strong>Message:</strong></p>
+                <p>{message_content_from_box.replace(chr(10), '<br>')}</p>
+            </body></html>
+            """
+            
+            success = send_email_notification(
+                to_email=to_support_email, 
+                subject=subject,
+                html_content=html_body,
+                from_name=email_addr, 
+                attachment_file_obj=attachment_file
+            )
+            
+            if success: 
+                return (
+                    gr.update(value="<p style='color:green;'>Message sent successfully!</p>"), 
+                    gr.update(value=""), 
+                    gr.update(value=""), 
+                    gr.update(value=""), 
+                    gr.update(value=None) 
+                )
+            else: 
+                return (
+                    gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later.</p>"), 
+                    None, 
+                    None, 
+                    gr.update(value=message_content_from_box), 
+                    attachment_file 
+                )
+
+        # --- Attach the callback to the button ---
+        btn_send_contact_email.click(
+            handle_contact_submission,
+            inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
+            outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment] 
         )
-        success = send_email_notification(
-            "easyaitutor@gmail.com",
-            subject,
-            html_body,
-            email_addr,
-            attachment_file,
-        )
-
-        if success:
-            return (
-                gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
-                gr.update(value=""),  # clear name
-                gr.update(value=""),  # clear email
-                gr.update(value=""),  # clear message
-                gr.update(value=None) # clear attachment
-            )
-        else:
-            return (
-                gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later.</p>"),
-                None,                                 # leave name
-                None,                                 # leave email
-                gr.update(value=message_content),     # restore message
-                None                                  # leave attachment
-            )
-
-    # Hook it up to your button
-    btn_send_contact_email.click(
-        handle_contact_submission,
-        inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
-        outputs=[contact_status_output,
-                 contact_name, contact_email_addr,
-                 contact_message, contact_attachment]
-    )
-  return demo
+    # End of with gr.Blocks() as demo:
+    return demo
 
 # --- FastAPI Mounting & Main Execution ---
 app = FastAPI()
@@ -526,7 +544,6 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 
 @app.on_event("startup")
 async def startup_event():
-    # Ensure scheduler is accessible (it's global)
     scheduler.add_job(send_daily_class_reminders, trigger=CronTrigger(hour=5, minute=50, timezone='UTC'), id="daily_reminders", name="Daily Class Reminders", replace_existing=True)
     scheduler.add_job(check_student_progress_and_notify_professor, trigger=CronTrigger(hour=18, minute=0, timezone='UTC'), id="progress_check", name="Student Progress Check", replace_existing=True)
     if not scheduler.running: 
@@ -545,11 +562,10 @@ async def shutdown_event():
         print("APScheduler shutdown.")
 
 gradio_app_instance = build_ui()
-# Ensure build_ui() returns a valid Gradio Blocks instance
 if gradio_app_instance is None:
     print("ERROR: build_ui() returned None. Gradio app cannot be mounted.")
-    # Optionally raise an exception or exit
-    # raise ValueError("build_ui() must return a Gradio Blocks instance.")
+    # Consider raising an error or exiting if this is critical
+    # raise ValueError("build_ui() failed to return a Gradio Blocks instance.")
 else:
     app = gr.mount_gradio_app(app, gradio_app_instance, path="/")
 
@@ -558,7 +574,6 @@ def healthz(): return {"status":"ok", "scheduler_running": scheduler.running if 
 
 if __name__ == "__main__":
     print("Starting Gradio UI locally. For production, use Uvicorn: uvicorn your_script_name:app --host 0.0.0.0 --port $PORT")
-    # gradio_app_instance is already defined globally if build_ui() was called before mounting
     if 'gradio_app_instance' in globals() and gradio_app_instance is not None:
         gradio_app_instance.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT",7860)))
         try:
