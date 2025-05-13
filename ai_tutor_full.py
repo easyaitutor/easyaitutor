@@ -8,19 +8,22 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 import uuid
 import random
 import time
-import mimetypes # For contact form attachment
+import mimetypes
+import csv # For simple progress logging
 
 import openai
 import gradio as gr
-from docx import Document # For creating DOCX files
+from docx import Document
 import smtplib
 from email.message import EmailMessage
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates # For serving the student UI shell
+from fastapi.staticfiles import StaticFiles # If you have static assets for student UI
 
-import jwt # PyJWT for access tokens
-import requests # For calling external APIs (student progress)
+import jwt
+import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -30,32 +33,56 @@ try:
     fitz_available = True
 except ImportError:
     fitz_available = False
-    print("PyMuPDF (fitz) not found. Page number mapping for lesson plans will be limited or unavailable.")
+    print("PyMuPDF (fitz) not found. Page number mapping will be limited.")
 
 # --- Configuration ---
 openai.api_key = os.getenv("OPENAI_API_KEY")
 CONFIG_DIR = Path("course_data")
 CONFIG_DIR.mkdir(exist_ok=True)
+PROGRESS_LOG_FILE = CONFIG_DIR / "student_progress_log.csv" # For simplified progress
+
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 SMTP_USER = os.getenv("SMTP_USER")
 SMTP_PASS = os.getenv("SMTP_PASS")
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-this-super-secret-key-in-production")
-if JWT_SECRET_KEY == "change-this-super-secret-key-in-production":
-    print("WARNING: JWT_SECRET_KEY is set to its default insecure value. Please set a strong secret key.")
+
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "a-very-secure-secret-key-please-change")
+if JWT_SECRET_KEY == "a-very-secure-secret-key-please-change":
+    print("WARNING: JWT_SECRET_KEY is set to default. Set a strong secret key in env variables.")
 LINK_VALIDITY_HOURS = 6
-EASYAI_TUTOR_PROGRESS_API_ENDPOINT = os.getenv("EASYAI_TUTOR_PROGRESS_API_ENDPOINT")
+ALGORITHM = "HS256"
+
+EASYAI_TUTOR_PROGRESS_API_ENDPOINT = os.getenv("EASYAI_TUTOR_PROGRESS_API_ENDPOINT") # Less used now
+
 days_map = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
 
-# --- PDF Processing ---
-def split_sections(pdf_file_obj_for_sections):
-    if hasattr(pdf_file_obj_for_sections, "seek"): pdf_file_obj_for_sections.seek(0)
+# --- Student Tutor Configuration (can be moved to a separate config if needed) ---
+STUDENT_TTS_MODEL = "tts-1"
+STUDENT_CHAT_MODEL = "gpt-4o-mini" # Or gpt-3.5-turbo for cost/speed
+STUDENT_WHISPER_MODEL = "whisper-1"
+STUDENT_DEFAULT_ENGLISH_LEVEL = "B1 (Intermediate)" 
+STUDENT_AUDIO_DIR = Path("student_audio_files")
+STUDENT_AUDIO_DIR.mkdir(exist_ok=True)
+STUDENT_BOT_NAME = "Easy AI Tutor"
+STUDENT_LOGO_PATH = "logo.png" # Ensure this path is accessible or remove
+
+STUDENT_ONBOARDING_TURNS = 2 # User turns for onboarding
+STUDENT_TEACHING_TURNS_PER_BREAK = 5 # User turns in teaching before interest break
+STUDENT_INTEREST_BREAK_TURNS = 1 # User turns during an interest break
+STUDENT_QUIZ_AFTER_TURNS = 7 # User teaching turns before a quiz
+STUDENT_MAX_SESSION_TURNS = 20 # Total user turns before session ends (approx 30 mins)
+
+# --- PDF Processing & Helpers (Mostly unchanged, minor robustness) ---
+def split_sections(pdf_file_obj):
+    if hasattr(pdf_file_obj, "seek"): pdf_file_obj.seek(0)
+    # ... (split_sections logic remains largely the same as your last full version) ...
+    # (Ensure it handles fitz and PyPDF2 fallback correctly)
     if fitz_available:
         try:
             doc = None
-            if hasattr(pdf_file_obj_for_sections, "name"): doc = fitz.open(pdf_file_obj_for_sections.name)
-            elif hasattr(pdf_file_obj_for_sections, "read"):
-                pdf_bytes_sec = pdf_file_obj_for_sections.read(); pdf_file_obj_for_sections.seek(0)
+            if hasattr(pdf_file_obj, "name"): doc = fitz.open(pdf_file_obj.name)
+            elif hasattr(pdf_file_obj, "read"):
+                pdf_bytes_sec = pdf_file_obj.read(); pdf_file_obj.seek(0)
                 doc = fitz.open(stream=pdf_bytes_sec, filetype="pdf")
             if not doc: raise Exception("Could not open PDF with fitz.")
             pages_text = [page.get_text("text", sort=True) for page in doc]; doc.close()
@@ -68,7 +95,6 @@ def split_sections(pdf_file_obj_for_sections):
             if not headings:
                 full_content = "\n".join(pages_text)
                 if full_content.strip(): sections.append({'title': 'Full Document Content', 'content': full_content.strip(), 'page': 1})
-                print(f"DEBUG: split_sections (fitz) no headings, returning {len(sections)} sections.")
                 return sections
             for idx, h in enumerate(headings):
                 current_page_idx, start_char = h['page_index'], h['start_char_index']; content = ''
@@ -84,27 +110,24 @@ def split_sections(pdf_file_obj_for_sections):
                     for p_idx in range(current_page_idx + 1, len(pages_text)): content += pages_text[p_idx] + '\n'
                 if content.strip(): sections.append({'title': h['title'], 'content': content.strip(), 'page': h['page']})
             sections = [s for s in sections if len(s['content']) > len(s['title']) + 20]
-            print(f"DEBUG: split_sections (fitz) found {len(headings)}h, returning {len(sections)} sections.")
             return sections
         except Exception as e_fitz: print(f"Error fitz splitting: {e_fitz}. Fallback.");
     try:
         from PyPDF2 import PdfReader
-        print("Using PyPDF2 for section splitting.");
-        if hasattr(pdf_file_obj_for_sections, "seek"): pdf_file_obj_for_sections.seek(0)
-        reader = PdfReader(pdf_file_obj_for_sections.name if hasattr(pdf_file_obj_for_sections, "name") else pdf_file_obj_for_sections)
+        if hasattr(pdf_file_obj, "seek"): pdf_file_obj.seek(0)
+        reader = PdfReader(pdf_file_obj.name if hasattr(pdf_file_obj, "name") else pdf_file_obj)
         text = "\n".join(page.extract_text() or '' for page in reader.pages)
         chunks, sections, sents_per_sec = re.split(r'(?<=[.?!])\s+', text), [], 15
         for i in range(0, len(chunks), sents_per_sec):
             title, content = f"Content Block {i//sents_per_sec+1}", " ".join(chunks[i:i+sents_per_sec]).strip()
             if content: sections.append({'title': title, 'content': content, 'page': None})
         if not sections and text.strip(): sections.append({'title': 'Full Document (PyPDF2)', 'content': text.strip(), 'page': None})
-        print(f"DEBUG: split_sections (PyPDF2) created {len(sections)} sections.")
         return sections
-    except ImportError: print("PyPDF2 not found."); return [{'title': 'PDF Error', 'content': 'No PDF lib.', 'page': None}]
-    except Exception as e_pypdf2: print(f"Error PyPDF2 splitting: {e_pypdf2}"); return [{'title': 'PDF Error', 'content': f'{e_pypdf2}', 'page': None}]
+    except ImportError: return [{'title': 'PDF Error', 'content': 'PyPDF2 not found.', 'page': None}]
+    except Exception as e_pypdf2: return [{'title': 'PDF Error', 'content': f'{e_pypdf2}', 'page': None}]
 
-# --- Helpers ---
 def download_docx(content, filename):
+    # ... (download_docx logic remains the same) ...
     buf = io.BytesIO(); doc = Document()
     for line in content.split("\n"):
         p = doc.add_paragraph()
@@ -115,82 +138,54 @@ def download_docx(content, filename):
     doc.save(buf); buf.seek(0); return buf, filename
 
 def count_classes(sd, ed, wdays):
+    # ... (count_classes logic remains the same) ...
     cnt, cur = 0, sd
     while cur <= ed:
         if cur.weekday() in wdays: cnt += 1
         cur += timedelta(days=1)
     return cnt
-
+    
 def generate_access_token(student_id, course_id, lesson_id, lesson_date_obj):
+    # ... (generate_access_token logic remains the same) ...
     if isinstance(lesson_date_obj, str): lesson_date_obj = datetime.strptime(lesson_date_obj, '%Y-%m-%d').date()
     iat = datetime.combine(lesson_date_obj, datetime.min.time(), tzinfo=dt_timezone.utc).replace(hour=6)
     exp = iat + timedelta(hours=LINK_VALIDITY_HOURS)
-    payload = {"sub": student_id, "course_id": course_id, "lesson_id": lesson_id, "iat": iat, "exp": exp, "aud": "https://www.easyaitutor.com"}
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm="HS256")
+    payload = {"sub": student_id, "course_id": course_id, "lesson_id": lesson_id, "iat": iat, "exp": exp, "aud": "https://www.easyaitutor.com"} # Assuming this is the intended audience
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
 def generate_5_digit_code(): return str(random.randint(10000, 99999))
 
 def send_email_notification(to_email, subject, html_content, from_name="User", attachment_file_obj=None):
-    if not SMTP_USER or not SMTP_PASS:
-        print(f"CRITICAL SMTP ERROR: SMTP_USER or SMTP_PASS not configured. Cannot send email to {to_email}.")
-        return False 
-
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = f"AI Tutor Panel <{SMTP_USER}>" 
-    msg["To"] = to_email
-    if to_email.lower() == SMTP_USER.lower() and "@" in from_name: 
-         msg.add_header('Reply-To', from_name)
-
+    # ... (send_email_notification logic with robust error handling and attachment, as developed) ...
+    if not SMTP_USER or not SMTP_PASS: print(f"CRITICAL SMTP ERROR: SMTP_USER or SMTP_PASS not configured. Cannot send email to {to_email}."); return False
+    msg = EmailMessage(); msg["Subject"] = subject; msg["From"] = f"AI Tutor Panel <{SMTP_USER}>"; msg["To"] = to_email
+    if to_email.lower() == SMTP_USER.lower() and "@" in from_name: msg.add_header('Reply-To', from_name)
     msg.add_alternative(html_content, subtype='html')
-
     if attachment_file_obj and hasattr(attachment_file_obj, "name") and attachment_file_obj.name:
         try:
-            with open(attachment_file_obj.name, 'rb') as fp:
-                file_data = fp.read()
-            
+            with open(attachment_file_obj.name, 'rb') as fp: file_data = fp.read()
             ctype, encoding = mimetypes.guess_type(attachment_file_obj.name)
-            if ctype is None or encoding is not None: 
-                ctype = 'application/octet-stream' 
-            maintype, subtype_val = ctype.split('/', 1) 
-            
-            msg.add_attachment(file_data,
-                               maintype=maintype,
-                               subtype=subtype_val, 
-                               filename=os.path.basename(attachment_file_obj.name))
-            print(f"Attachment {os.path.basename(attachment_file_obj.name)} prepared for email.")
-        except FileNotFoundError:
-            print(f"Error attaching file: File not found at {attachment_file_obj.name}")
-        except Exception as e_attach:
-            print(f"Error processing attachment {attachment_file_obj.name}: {e_attach}")
-
+            if ctype is None or encoding is not None: ctype = 'application/octet-stream'
+            maintype, subtype_val = ctype.split('/', 1)
+            msg.add_attachment(file_data,maintype=maintype,subtype=subtype_val,filename=os.path.basename(attachment_file_obj.name))
+            print(f"Attachment {os.path.basename(attachment_file_obj.name)} prepared.")
+        except FileNotFoundError: print(f"Error attaching: File not found at {attachment_file_obj.name}")
+        except Exception as e_attach: print(f"Error processing attachment {attachment_file_obj.name}: {e_attach}")
     try:
         print(f"Attempting to send email to {to_email} via {SMTP_SERVER}:{SMTP_PORT} as {SMTP_USER}...")
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as s: 
-            s.set_debuglevel(0) # Set to 1 for verbose SMTP logs, 0 for production
-            s.starttls()
-            s.login(SMTP_USER, SMTP_PASS)
-            s.send_message(msg)
-        print(f"Email successfully sent to {to_email} with subject: {subject}")
-        return True
-    except smtplib.SMTPAuthenticationError as e_auth:
-        print(f"SMTP Authentication Error for {SMTP_USER}: {e_auth}\n{traceback.format_exc()}")
-        return False
-    except smtplib.SMTPConnectError as e_conn:
-        print(f"SMTP Connection Error to {SMTP_SERVER}:{SMTP_PORT}: {e_conn}\n{traceback.format_exc()}")
-        return False
-    except smtplib.SMTPServerDisconnected as e_disconn:
-        print(f"SMTP Server Disconnected: {e_disconn}\n{traceback.format_exc()}")
-        return False
-    except smtplib.SMTPException as e_smtp_general: 
-        print(f"General SMTP Exception sending to {to_email}: {e_smtp_general}\n{traceback.format_exc()}")
-        return False
-    except Exception as e: 
-        print(f"Unexpected error sending email to {to_email}: {e}\n{traceback.format_exc()}")
-        return False
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=20) as s: # Increased timeout
+            s.set_debuglevel(0) # 0 for production, 1 for debug
+            s.starttls(); s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
+        print(f"Email successfully sent to {to_email}"); return True
+    except smtplib.SMTPAuthenticationError as e: print(f"SMTP Auth Error for {SMTP_USER}: {e}\n{traceback.format_exc()}"); return False
+    except smtplib.SMTPConnectError as e: print(f"SMTP Connect Error to {SMTP_SERVER}:{SMTP_PORT}: {e}\n{traceback.format_exc()}"); return False
+    except smtplib.SMTPServerDisconnected as e: print(f"SMTP Server Disconnected: {e}\n{traceback.format_exc()}"); return False
+    except smtplib.SMTPException as e: print(f"General SMTP Exception to {to_email}: {e}\n{traceback.format_exc()}"); return False
+    except Exception as e: print(f"Unexpected error sending email to {to_email}: {e}\n{traceback.format_exc()}"); return False
 
-# --- Syllabus & Lesson Plan Generation ---
+# --- Syllabus & Lesson Plan Generation (Instructor Panel) ---
 def generate_syllabus(cfg):
+    # ... (generate_syllabus logic remains the same) ...
     sd, ed = datetime.strptime(cfg['start_date'], '%Y-%m-%d').date(), datetime.strptime(cfg['end_date'], '%Y-%m-%d').date()
     mr, total = f"{sd.strftime('%B')}–{ed.strftime('%B')}", count_classes(sd, ed, [days_map[d] for d in cfg['class_days']])
     header = [f"Course: {cfg['course_name']}", f"Prof: {cfg['instructor']['name']}", f"Email: {cfg['instructor']['email']}", f"Duration: {mr} ({total} classes)", '_'*60]
@@ -199,6 +194,7 @@ def generate_syllabus(cfg):
     return "\n".join(header + [""] + body)
 
 def generate_plan_by_week_structured_and_formatted(cfg):
+    # ... (generate_plan_by_week_structured_and_formatted logic using character segmentation, as developed) ...
     sd, ed = datetime.strptime(cfg['start_date'], '%Y-%m-%d').date(), datetime.strptime(cfg['end_date'], '%Y-%m-%d').date()
     wdays = {days_map[d] for d in cfg['class_days']}
     class_dates = [cur for cur in (sd + timedelta(i) for i in range((ed - sd).days + 1)) if cur.weekday() in wdays]
@@ -254,10 +250,9 @@ def generate_plan_by_week_structured_and_formatted(cfg):
         formatted_lines.append('')
     return "\n".join(formatted_lines), structured_lessons
 
-# --- APScheduler Setup ---
+# --- APScheduler Setup & Jobs ---
 scheduler = BackgroundScheduler(timezone="UTC") 
-
-# --- Scheduler Jobs ---
+# ... (send_daily_class_reminders and check_student_progress_and_notify_professor functions as previously defined) ...
 def send_daily_class_reminders():
     print(f"SCHEDULER: Running daily class reminder job at {datetime.now(dt_timezone.utc)}")
     today_utc = datetime.now(dt_timezone.utc).date()
@@ -275,7 +270,7 @@ def send_daily_class_reminders():
                         student_id, student_email, student_name = student.get("id", "unknown"), student.get("email"), student.get("name", "Student")
                         if not student_email: continue
                         token = generate_access_token(student_id, course_id, lesson["lesson_number"], lesson_date)
-                        access_link = f"https://www.easyaitutor.com/class?token={token}"
+                        access_link = f"https://www.easyaitutor.com/class?token={token}" # Ensure your domain is correct
                         email_subject = f"Today's Class Link for {course_name}: {lesson['topic_summary']}"
                         email_html_body = f"""
                         <html><head><style>body {{font-family: sans-serif;}} strong {{color: #007bff;}} a {{color: #0056b3;}} .container {{padding: 20px; border: 1px solid #ddd; border-radius: 5px;}} .code {{font-size: 1.5em; font-weight: bold; background-color: #f0f0f0; padding: 5px 10px;}}</style></head>
@@ -290,40 +285,91 @@ def send_daily_class_reminders():
                         send_email_notification(student_email, email_subject, email_html_body, student_name)
         except Exception as e: print(f"SCHEDULER: Error in daily reminders for {config_file.name}: {e}\n{traceback.format_exc()}")
 
+def log_student_progress(student_id, course_id, lesson_id, quiz_score_str, session_duration_secs, engagement_notes="N/A"):
+    """Logs student progress to a CSV file."""
+    # Ensure header exists
+    if not PROGRESS_LOG_FILE.exists():
+        with open(PROGRESS_LOG_FILE, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(["timestamp", "student_id", "course_id", "lesson_id", "quiz_score", "session_duration_seconds", "engagement_notes"])
+    
+    with open(PROGRESS_LOG_FILE, 'a', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow([datetime.now(dt_timezone.utc).isoformat(), student_id, course_id, lesson_id, quiz_score_str, session_duration_secs, engagement_notes])
+    print(f"Progress logged for student {student_id}, lesson {lesson_id} of course {course_id}.")
+
+
 def check_student_progress_and_notify_professor():
     print(f"SCHEDULER: Running student progress check at {datetime.now(dt_timezone.utc)}")
-    if not EASYAI_TUTOR_PROGRESS_API_ENDPOINT: print("SCHEDULER: EASYAI_TUTOR_PROGRESS_API_ENDPOINT not set. Skipping."); return
-    yesterday_utc = datetime.now(dt_timezone.utc).date() - timedelta(days=1)
-    for config_file in CONFIG_DIR.glob("*_config.json"):
-        try:
-            cfg = json.loads(config_file.read_text(encoding="utf-8"))
-            course_id, course_name = config_file.stem.replace("_config", ""), cfg.get("course_name", "N/A")
-            instructor_cfg = cfg.get("instructor", {}); instructor_email, instructor_name = instructor_cfg.get("email"), instructor_cfg.get("name", "Instructor")
-            if not instructor_email or not cfg.get("students") or not cfg.get("lessons"): continue
-            for lesson in cfg.get("lessons", []):
-                lesson_date = datetime.strptime(lesson["date"], '%Y-%m-%d').date()
-                if lesson_date != yesterday_utc: continue
-                lesson_id_for_api = lesson["lesson_number"]; print(f"SCHEDULER: Checking progress for {course_name}, Lesson {lesson_id_for_api}")
-                for student in cfg.get("students", []):
-                    student_id, student_name = student.get("id"), student.get("name", "Student")
-                    if not student_id: continue
-                    try:
-                        response = requests.get(EASYAI_TUTOR_PROGRESS_API_ENDPOINT, params={"course_id": course_id, "student_id": student_id, "lesson_id": lesson_id_for_api}, timeout=10)
-                        response.raise_for_status(); progress_data = response.json()
-                        quiz_score, engagement = progress_data.get("quiz_score"), progress_data.get("engagement_level")
-                        needs_attention, reasons = False, []
-                        if quiz_score is not None and isinstance(quiz_score, (int, float)) and quiz_score < 60: needs_attention, reasons = True, reasons + [f"Quiz score {quiz_score}% (<60%)"]
-                        if isinstance(engagement, str) and engagement.lower() == "low": needs_attention, reasons = True, reasons + ["Low engagement reported"]
-                        if needs_attention:
-                            print(f"SCHEDULER: Alert for {student_name}, {course_name}, lesson {lesson_id_for_api}.")
-                            subject = f"Student Progress Alert: {student_name} in {course_name}"; reasons_html = "".join([f"<li>{r}</li>" for r in reasons])
-                            details_url = progress_data.get('details_url'); details_link_html = f"<p>Details: <a href='{details_url}'>View Progress</a></p>" if details_url else ""
-                            body_html = f"""<html><body><p>Dear {instructor_name},</p><p>Alert for <strong>{student_name}</strong> in <strong>{course_name}</strong> (Lesson "{lesson.get('topic_summary', lesson_id_for_api)}", Date: {lesson_date.strftime('%B %d, %Y')}):</p><ul>{reasons_html}</ul>{details_link_html}<p>Please consider engaging with the student.</p><p>AI Tutor Monitoring</p></body></html>"""
-                            send_email_notification(instructor_email, subject, body_html, instructor_name)
-                    except Exception as e_prog: print(f"SCHEDULER: Error processing progress for {student_name}: {e_prog}")
-        except Exception as e_course: print(f"SCHEDULER: Error in progress check for {config_file.name}: {e_course}")
+    # This function will now read from PROGRESS_LOG_FILE
+    # For simplicity, it checks for any recent low scores.
+    # A more robust system would track per student, per lesson, and avoid re-notifying.
+    
+    if not PROGRESS_LOG_FILE.exists():
+        print("SCHEDULER: Progress log file does not exist. Skipping check.")
+        return
 
-# --- Gradio Callbacks ---
+    one_day_ago = datetime.now(dt_timezone.utc) - timedelta(days=1)
+    alerts_to_send = {} # course_id -> {student_id: [messages]}
+
+    try:
+        with open(PROGRESS_LOG_FILE, 'r', newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    log_timestamp = datetime.fromisoformat(row["timestamp"])
+                    if log_timestamp < one_day_ago: # Only check recent logs (e.g., last 24 hours)
+                        continue
+
+                    quiz_score_str = row.get("quiz_score", "0/0") # e.g., "1/2"
+                    if "/" in quiz_score_str:
+                        correct, total_qs = map(int, quiz_score_str.split('/'))
+                        if total_qs > 0 and (correct / total_qs) < 0.60:
+                            student_id = row["student_id"]
+                            course_id = row["course_id"]
+                            lesson_id = row["lesson_id"]
+                            
+                            # Prepare alert message
+                            alert_msg = (f"Student {student_id} scored {quiz_score_str} "
+                                         f"on lesson {lesson_id} (logged {log_timestamp.strftime('%Y-%m-%d %H:%M')} UTC). "
+                                         f"Session duration: {row.get('session_duration_seconds','N/A')}s. "
+                                         f"Notes: {row.get('engagement_notes','N/A')}")
+                            
+                            alerts_to_send.setdefault(course_id, {}).setdefault(student_id, []).append(alert_msg)
+                except ValueError:
+                    print(f"SCHEDULER: Skipping malformed row in progress log: {row}")
+                    continue
+    except Exception as e_read_log:
+        print(f"SCHEDULER: Error reading progress log: {e_read_log}")
+        return
+
+    # Send alerts
+    for course_id, student_alerts in alerts_to_send.items():
+        config_path = CONFIG_DIR / f"{course_id}_config.json"
+        if config_path.exists():
+            try:
+                cfg = json.loads(config_path.read_text(encoding="utf-8"))
+                instructor_email = cfg.get("instructor", {}).get("email")
+                instructor_name = cfg.get("instructor", {}).get("name", "Instructor")
+                course_name = cfg.get("course_name", course_id)
+
+                if instructor_email:
+                    for student_id, messages in student_alerts.items():
+                        subject = f"Student Progress Alert: {student_id} in {course_name}"
+                        alerts_html = "<ul>" + "".join([f"<li>{msg}</li>" for msg in messages]) + "</ul>"
+                        body_html = (f"<html><body><p>Dear {instructor_name},</p>"
+                                     f"<p>One or more students in your course '{course_name}' may require attention based on recent AI Tutor sessions:</p>"
+                                     f"{alerts_html}"
+                                     f"<p>Please consider reviewing their progress and engaging with them directly.</p>"
+                                     f"<p>Best regards,<br>AI Tutor Monitoring System</p></body></html>")
+                        send_email_notification(instructor_email, subject, body_html, "AI Tutor System")
+                        print(f"SCHEDULER: Sent progress alert for student {student_id} in course {course_name} to {instructor_email}")
+            except Exception as e_send_alert:
+                print(f"SCHEDULER: Error sending progress alert for course {course_id}: {e_send_alert}")
+
+
+# --- Gradio Callbacks (Instructor Panel) ---
+# ... (_get_syllabus_text_from_config, _get_plan_text_from_config, enable_edit_syllabus_and_reload, enable_edit_plan_and_reload as before) ...
 def _get_syllabus_text_from_config(course_name_str):
     if not course_name_str: return "Error: Course name missing."
     path = CONFIG_DIR / f"{course_name_str.replace(' ','_').lower()}_config.json"
@@ -353,6 +399,7 @@ def enable_edit_plan_and_reload(current_course_name_for_plan, current_plan_outpu
     return gr.update(interactive=True)
 
 def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, sd_day, ey, em, ed_day, class_days_selected, students_input_str):
+    # ... (save_setup logic as previously defined, ensuring it saves full_text_content and char_offset_page_map) ...
     num_expected_outputs = 13 
     def error_return_tuple(error_message_str):
         return (gr.update(value=error_message_str, visible=True, interactive=False), gr.update(visible=True), None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(value="", visible=False), gr.update(visible=True), gr.update(visible=False))
@@ -408,6 +455,7 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, 
     except Exception as e: print(f"Error in save_setup: {e}\n{traceback.format_exc()}"); return error_return_tuple(f"⚠️ Error: {e}")
 
 def generate_plan_callback(course_name_from_input):
+    # ... (generate_plan_callback logic as previously defined, including the notification message) ...
     def error_return_for_plan(error_message_str):
         return (gr.update(value=error_message_str, visible=True, interactive=False), None, None, gr.update(visible=True), None, None, gr.update(visible=False), gr.update(visible=False))
     try:
@@ -433,6 +481,7 @@ def generate_plan_callback(course_name_from_input):
     except Exception as e: print(f"Error in generate_plan_callback: {e}\n{traceback.format_exc()}"); return error_return_for_plan(f"⚠️ Error: {e}")
 
 def email_document_callback(course_name, doc_type, output_text_content, students_input_str):
+    # ... (email_document_callback logic as previously defined, with refined SMTP error handling) ...
     if not SMTP_USER or not SMTP_PASS: return gr.update(value="⚠️ Error: SMTP settings not configured.")
     try:
         if not course_name or not output_text_content: return gr.update(value=f"⚠️ Error: Course Name & {doc_type} content required.")
@@ -447,7 +496,7 @@ def email_document_callback(course_name, doc_type, output_text_content, students
             msg = EmailMessage(); msg["Subject"], msg["From"], msg["To"] = f"{doc_type.capitalize()}: {course_name}", SMTP_USER, rec["email"]
             msg.set_content(f"Hi {rec['name']},\n\nAttached is {doc_type.lower()} for {course_name}.\n\nBest,\nAI Tutor System"); msg.add_attachment(attachment_data, maintype="application", subtype="vnd.openxmlformats-officedocument.wordprocessingml.document", filename=fn)
             try: 
-                with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s: s.starttls(); s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
+                with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=15) as s: s.starttls(); s.login(SMTP_USER, SMTP_PASS); s.send_message(msg) # Added timeout
                 s_count+=1
             except smtplib.SMTPRecipientsRefused as e_recp:
                 err_str = str(e_recp).lower(); keywords = ["not a valid rfc", "address rejected", "user unknown", "no such user", "bad recipient", "invalid mailbox"]
@@ -463,9 +512,12 @@ def email_document_callback(course_name, doc_type, output_text_content, students
 def email_syllabus_callback(c, s_str, out_content): return email_document_callback(c, "Syllabus", out_content, s_str)
 def email_plan_callback(c, s_str, out_content): return email_document_callback(c, "Lesson Plan", out_content, s_str)
 
-# --- Build UI ---
-def build_ui():
-    with gr.Blocks(theme=gr.themes.Soft()) as demo:
+# --- Build Instructor UI ---
+def build_instructor_ui():
+    # ... (The entire build_ui function as defined in the previous full code, 
+    #      now renamed to build_instructor_ui, including the handle_contact_submission 
+    #      and its .click handler correctly indented within it) ...
+    with gr.Blocks(theme=gr.themes.Soft()) as instructor_demo: # Changed demo to instructor_demo
         gr.Markdown("## AI Tutor Instructor Panel")
         with gr.Tabs():
             with gr.TabItem("Course Setup & Syllabus"):
@@ -501,7 +553,6 @@ def build_ui():
                 btn_send_contact_email = gr.Button("Send Message", variant="primary")
                 contact_status_output = gr.Markdown(value="")
         
-        # --- Event Handlers ---
         dummy_btn_1, dummy_btn_2, dummy_btn_3, dummy_btn_4 = gr.Button(visible=False), gr.Button(visible=False), gr.Button(visible=False), gr.Button(visible=False)
         btn_save.click(save_setup, inputs=[course,instr,email,devices,pdf_file,sy,sm,sd_day,ey,em,ed_day,class_days_selected,students_input_str], outputs=[output_box, btn_save, dummy_btn_1, btn_generate_plan, btn_edit_syl, btn_email_syl, btn_edit_plan, btn_email_plan, syllabus_actions_row, plan_buttons_row, output_plan_box, lesson_plan_setup_message, course_load_for_plan])
         btn_edit_syl.click(enable_edit_syllabus_and_reload, inputs=[course, output_box], outputs=[output_box])
@@ -511,140 +562,490 @@ def build_ui():
         btn_email_plan.click(email_plan_callback, inputs=[course_load_for_plan, students_input_str, output_plan_box], outputs=[output_plan_box])
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
         
-        # --- Contact Form Callback Definition (Correctly Indented within build_ui) ---
         def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
             errors = []
             if not name.strip(): errors.append("Name is required.")
             if not email_addr.strip(): errors.append("Email Address is required.")
             elif "@" not in email_addr: errors.append("A valid Email Address (containing '@') is required.")
-            
-            if not message_content_from_box.strip(): 
-                errors.append("Message is required.")
+            if not message_content_from_box.strip(): errors.append("Message is required.")
 
             if errors:
                 error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
-                # Update contact_message (the Textbox) with the error, clear status_output, keep name/email, keep attachment
-                return (
-                    gr.update(value=""),  # 1. Clear contact_status_output (Markdown)
-                    None,                 # 2. Keep name field as is
-                    None,                 # 3. Keep email field as is
-                    gr.update(value=error_text), # 4. UPDATE MESSAGE BOX with error text
-                    None                  # 5. Keep attachment as is
-                )
+                return (gr.update(value=""), None, None, gr.update(value=error_text), None)
 
-            # --- Send Email (only if validation passed) ---
-            # This yield updates the UI and then the function continues.
-            yield (
-                gr.update(value="<p><i>Sending message... Please wait.</i></p>"), # contact_status_output
-                None, # contact_name (no change)
-                None, # contact_email_addr (no change)
-                gr.update(value=""), # contact_message (clear it as it's being sent)
-                None  # contact_attachment (no change yet)
-            )
-            
-            time.sleep(0.1) # Small delay to ensure Gradio processes the yield update
-
+            yield (gr.update(value="<p><i>Sending message... Please wait.</i></p>"), None, None, gr.update(value=""), None)
+            time.sleep(0.1) 
             try:
                 subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
                 to_support_email = "easyaitutor@gmail.com" 
-                html_body = f"""
-                <html><body>
-                    <h3>New Contact Request from AI Tutor Panel</h3>
-                    <p><strong>Name:</strong> {name}</p>
-                    <p><strong>Email (for reply):</strong> {email_addr}</p>
-                    <hr>
-                    <p><strong>Message:</strong></p>
-                    <p>{message_content_from_box.replace(chr(10), '<br>')}</p>
-                </body></html>
-                """
-                
-                print(f"Preparing to send contact email from {name} <{email_addr}>.")
-                success = send_email_notification(
-                    to_email=to_support_email, 
-                    subject=subject,
-                    html_content=html_body,
-                    from_name=email_addr, 
-                    attachment_file_obj=attachment_file
-                )
-                
-                if success: 
-                    print("Contact email sent successfully.")
-                    return (
-                        gr.update(value="<p style='color:green;'>Message sent successfully! We will get back to you shortly.</p>"), 
-                        gr.update(value=""), 
-                        gr.update(value=""), 
-                        gr.update(value=""), 
-                        gr.update(value=None) 
-                    )
-                else: 
-                    print("Contact email sending failed (send_email_notification returned False).")
-                    return (
-                        gr.update(value="<p style='color:red;'>Error: Could not send message. SMTP issue or attachment error. Please check server logs.</p>"), 
-                        None, 
-                        None, 
-                        gr.update(value=message_content_from_box), 
-                        attachment_file 
-                    )
+                html_body = f"<html><body><h3>Contact Request</h3><p><b>Name:</b> {name}</p><p><b>Email:</b> {email_addr}</p><hr><p><b>Message:</b></p><p>{message_content_from_box.replace(chr(10), '<br>')}</p></body></html>"
+                success = send_email_notification(to_support_email, subject, html_body, email_addr, attachment_file)
+                if success: return (gr.update(value="<p style='color:green;'>Message sent successfully!</p>"), gr.update(value=""), gr.update(value=""), gr.update(value=""), gr.update(value=None))
+                else: return (gr.update(value="<p style='color:red;'>Error: Could not send message. Check logs.</p>"), None, None, gr.update(value=message_content_from_box), attachment_file)
             except Exception as e_handler:
-                print(f"Unexpected error in handle_contact_submission after yield: {e_handler}\n{traceback.format_exc()}")
-                return (
-                        gr.update(value=f"<p style='color:red;'>Critical Error: An unexpected issue occurred: {e_handler}.</p>"), 
-                        None, 
-                        None, 
-                        gr.update(value=message_content_from_box),
-                        attachment_file
-                    )
+                print(f"Unexpected error in handle_contact_submission: {e_handler}\n{traceback.format_exc()}")
+                return (gr.update(value=f"<p style='color:red;'>Critical Error: {e_handler}.</p>"), None, None, gr.update(value=message_content_from_box), attachment_file)
+        btn_send_contact_email.click(handle_contact_submission, inputs=[contact_name, contact_email_addr, contact_message, contact_attachment], outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment])
+    return instructor_demo # Return the Blocks instance
 
-        # --- Attach the callback to the button (CORRECTLY INDENTED) ---
-        btn_send_contact_email.click(
-            handle_contact_submission,
-            inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
-            outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment] 
+# --- Student Tutor UI and Logic ---
+# This will be a new section, adapted from your student tutor script
+# For simplicity, we'll make it a function that returns a Gradio Blocks instance too.
+
+def build_student_tutor_ui(course_id: str, lesson_id: int, student_id: str, lesson_topic: str, lesson_segment_text: str):
+    """
+    Builds the Gradio UI for the student's interactive tutoring session.
+    This UI is initialized with specific lesson context.
+    """
+    # Initialize OpenAI client for student tutor (if not already global, or pass it)
+    # client = openai.OpenAI() # Assuming client is already globally defined and configured
+
+    # --- Student Tutor Configuration (copied from your script for context) ---
+    # TTS_MODEL = "tts-1"
+    # CHAT_MODEL = "gpt-4o-mini" # Or gpt-3.5-turbo
+    # WHISPER_MODEL = "whisper-1"
+    # DEFAULT_ENGLISH_LEVEL = "B1 (Intermediate)" # This could also come from student profile later
+    # AUDIO_DIR = Path("student_audio_files") # Use STUDENT_AUDIO_DIR
+    # BOT_NAME = "Easy AI Tutor" # Use STUDENT_BOT_NAME
+    # LOGO_PATH = "logo.png" # Use STUDENT_LOGO_PATH
+
+    # ONBOARDING_TURNS = 2
+    # TEACHING_TURNS_PER_BREAK = 5
+    # INTEREST_BREAK_TURNS = 1
+    # QUIZ_AFTER_TURNS = 7 
+    # MAX_SESSION_TURNS = 20
+    
+    # Simplified system prompt generation for Phase 1
+    def generate_student_system_prompt(mode, student_interests_str, current_topic, current_segment):
+        base = f"You are {STUDENT_BOT_NAME}, a friendly AI English tutor. Your student's English level is {STUDENT_DEFAULT_ENGLISH_LEVEL}. Keep responses concise."
+        if mode == "initial_greeting":
+            return f"{base} Today's lesson is about: '{current_topic}'. Let's start by getting to know you. What are your hobbies?"
+        elif mode == "onboarding":
+            return f"{base} You are getting to know the student. Interests so far: {student_interests_str}. Ask another open-ended question about their interests."
+        elif mode == "teaching_transition":
+            return f"{base} Interests: {student_interests_str}. Smoothly transition to teaching about '{current_topic}' based on this text: \"{current_segment[:300]}...\" Ask an opening question related to it."
+        elif mode == "teaching":
+            return f"{base} You are teaching about '{current_topic}' using the text: \"{current_segment[:300]}...\". Interests for context: {student_interests_str}. Provide gentle corrections. End with a question."
+        elif mode == "interest_break_transition":
+            return f"{base} Time for a short break! Based on interests: {student_interests_str}, ask a light question or share a fun fact related to their interests."
+        elif mode == "interest_break_active":
+            return f"{base} Student responded to your interest break. Give a brief, engaging reply. Then you'll go back to teaching '{current_topic}'."
+        elif mode == "quiz_time":
+            return f"{base} It's quiz time for '{current_topic}'. Based on the text: \"{current_segment[:300]}...\", generate one multiple-choice question with 3 options (A, B, C) and clearly indicate the correct answer in your internal thought process but not to the student. Ask the question."
+        elif mode == "ending_session":
+            return f"{base} The session is ending. Briefly summarize or thank the student."
+        return base # Default
+
+    with gr.Blocks(theme=gr.themes.Soft()) as student_demo:
+        gr.Markdown(f"# {STUDENT_BOT_NAME} - Lesson: {lesson_topic}")
+        gr.Markdown(f"Course ID: {course_id}, Lesson ID: {lesson_id}, Student ID: {student_id}") # For debug
+
+        # State variables for the student session
+        st_chat_history = gr.State([]) # For LLM context
+        st_display_history = gr.State([]) # For chatbot UI
+        st_student_profile = gr.State({"interests": [], "quiz_score": {"correct": 0, "total": 0}})
+        st_session_mode = gr.State("initial_greeting") # initial_greeting, onboarding, teaching, interest_break, quiz, ending
+        st_turn_count = gr.State(0) # User turns
+        st_teaching_turns_count = gr.State(0) # Teaching turns since last break/quiz
+        st_session_start_time = gr.State(datetime.now(dt_timezone.utc))
+
+
+        with gr.Row():
+            with gr.Column(scale=1):
+                st_voice_dropdown = gr.Dropdown(choices=["nova", "shimmer", "alloy"], value="nova", label="Tutor Voice")
+                st_mic_input = gr.Audio(sources=["microphone"], type="filepath", label="Record response:")
+                st_text_input = gr.Textbox(label="Or type response:", placeholder="Type here...")
+                st_send_button = gr.Button("Send", variant="primary")
+            with gr.Column(scale=3):
+                st_chatbot = gr.Chatbot(label=f"Conversation with {STUDENT_BOT_NAME}", height=500)
+                st_audio_out = gr.Audio(type="filepath", autoplay=False, label=f"{STUDENT_BOT_NAME} says:")
+
+        def st_initial_load():
+            # This function is called when the UI loads for the student.
+            # The tutor makes the first statement.
+            system_prompt = generate_student_system_prompt("initial_greeting", "", lesson_topic, lesson_segment_text)
+            try:
+                client = openai.OpenAI() # Ensure client is initialized
+                llm_response = client.chat.completions.create(
+                    model=STUDENT_CHAT_MODEL,
+                    messages=[{"role": "system", "content": system_prompt}],
+                    max_tokens=150
+                )
+                initial_tutor_message = llm_response.choices[0].message.content.strip()
+            except Exception as e:
+                print(f"STUDENT_TUTOR: OpenAI initial call failed: {e}")
+                initial_tutor_message = f"Hello! Welcome. We'll be discussing '{lesson_topic}'. Unfortunately, I had a slight hiccup starting up. Let's try our best! What are your hobbies?"
+
+            new_chat_hist = [{"role": "assistant", "content": initial_tutor_message}]
+            new_display_hist = [[None, initial_tutor_message]]
+            
+            audio_fp_update = None
+            try:
+                client = openai.OpenAI()
+                tts_resp = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=initial_tutor_message)
+                intro_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
+                with open(intro_fp, "wb") as f: f.write(tts_resp.content)
+                audio_fp_update = gr.update(value=str(intro_fp), autoplay=True)
+            except Exception as e_tts:
+                print(f"STUDENT_TUTOR: TTS for initial message failed: {e_tts}")
+            
+            return new_display_hist, new_chat_hist, "onboarding", 0, 0, audio_fp_update, datetime.now(dt_timezone.utc)
+
+
+        def st_process_turn(mic_audio, typed_text, 
+                            chat_h, display_h, profile, mode, turns, teaching_turns, voice, # States
+                            s_id, c_id, l_id, topic, segment_text): # Fixed lesson context
+            
+            user_input_text = ""
+            if mic_audio:
+                try:
+                    client = openai.OpenAI()
+                    with open(mic_audio, "rb") as af:
+                        transcription = client.audio.transcriptions.create(file=af, model=STUDENT_WHISPER_MODEL)
+                    user_input_text = transcription.text.strip()
+                    if not user_input_text: user_input_text = "(No speech detected)"
+                except Exception as e: user_input_text = f"(Transcription error: {e})"
+                try: os.remove(mic_audio)
+                except: pass
+            elif typed_text:
+                user_input_text = typed_text.strip()
+            else: # Should not happen if triggered by input change/submit
+                return display_h, chat_h, profile, mode, turns, teaching_turns, gr.update(), gr.update(value=None), gr.update(value="")
+
+            if not user_input_text: # Handle empty recognized speech
+                 return display_h, chat_h, profile, mode, turns, teaching_turns, gr.update(), gr.update(value=None), gr.update(value="")
+
+
+            display_h.append([user_input_text, None]) # Show user message immediately
+            chat_h.append({"role": "user", "content": user_input_text})
+            turns += 1
+
+            # --- Mode and Turn Logic (Simplified for Phase 1) ---
+            next_mode = mode
+            if mode == "onboarding":
+                profile["interests"].append(user_input_text) # Simple interest gathering
+                if turns >= STUDENT_ONBOARDING_TURNS: next_mode = "teaching_transition"
+            elif mode == "teaching_transition":
+                next_mode = "teaching"
+            elif mode == "teaching":
+                teaching_turns += 1
+                if teaching_turns % STUDENT_QUIZ_AFTER_TURNS == 0 and teaching_turns > 0 : # Quiz time
+                    next_mode = "quiz_time"
+                elif teaching_turns % STUDENT_TEACHING_TURNS_PER_BREAK == 0 and teaching_turns > 0: # Interest break
+                    next_mode = "interest_break_transition"
+            elif mode == "interest_break_transition":
+                next_mode = "interest_break_active"
+            elif mode == "interest_break_active":
+                next_mode = "teaching" # Back to teaching
+            elif mode == "quiz_time": # After student answers quiz
+                # (Actual quiz answer evaluation would go here)
+                # For now, just assume they answered and move back to teaching
+                # We'll log a placeholder score later
+                profile["quiz_score"]["total"] += 1 # Increment total questions
+                # if answer_is_correct: profile["quiz_score"]["correct"] += 1
+                next_mode = "teaching"
+
+
+            if turns >= STUDENT_MAX_SESSION_TURNS:
+                next_mode = "ending_session"
+
+            # --- Generate Bot Response ---
+            interests_str = ", ".join(profile["interests"]) if profile["interests"] else "not yet known"
+            system_prompt = generate_student_system_prompt(next_mode, interests_str, topic, segment_text)
+            
+            bot_response_text = "I'm thinking..."
+            try:
+                client = openai.OpenAI()
+                messages_for_llm = [{"role": "system", "content": system_prompt}] + chat_h
+                llm_response = client.chat.completions.create(
+                    model=STUDENT_CHAT_MODEL, messages=messages_for_llm, max_tokens=200
+                )
+                bot_response_text = llm_response.choices[0].message.content.strip()
+            except Exception as e:
+                print(f"STUDENT_TUTOR: OpenAI chat call failed: {e}")
+                bot_response_text = "I had a little trouble processing that. Could you try rephrasing?"
+
+            chat_h.append({"role": "assistant", "content": bot_response_text})
+            display_h[-1][1] = bot_response_text # Update last entry in display history
+
+            audio_fp_update = None
+            try:
+                client = openai.OpenAI()
+                tts_resp = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice=voice, input=bot_response_text)
+                reply_fp = STUDENT_AUDIO_DIR / f"reply_{uuid.uuid4()}.mp3"
+                with open(reply_fp, "wb") as f: f.write(tts_resp.content)
+                audio_fp_update = gr.update(value=str(reply_fp), autoplay=True)
+            except Exception as e_tts:
+                print(f"STUDENT_TUTOR: TTS for bot reply failed: {e_tts}")
+
+            if next_mode == "ending_session":
+                # Log progress here
+                session_end_time = datetime.now(dt_timezone.utc)
+                # session_duration = (session_end_time - st_session_start_time.value).total_seconds() # Needs st_session_start_time from state
+                # For now, log placeholder duration
+                log_student_progress(s_id, c_id, l_id, f"{profile['quiz_score']['correct']}/{profile['quiz_score']['total']}", 0)
+
+
+            return display_h, chat_h, profile, next_mode, turns, teaching_turns, audio_fp_update, gr.update(value=None), gr.update(value="")
+
+        # Load initial message from tutor
+        student_demo.load(
+            fn=st_initial_load, 
+            outputs=[st_chatbot, st_chat_history, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_session_start_time]
         )
-    # End of with gr.Blocks() as demo:
-    return demo
 
-# --- FastAPI Mounting & Main Execution ---
+        # Event handlers for student input
+        st_mic_input.change(
+            fn=st_process_turn, 
+            inputs=[st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_voice_dropdown, 
+                    gr.State(student_id), gr.State(course_id), gr.State(lesson_id), gr.State(lesson_topic), gr.State(lesson_segment_text)],
+            outputs=[st_chatbot, st_chat_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_mic_input, st_text_input],
+            show_progress="hidden"
+        )
+        st_text_input.submit(
+            fn=st_process_turn, 
+            inputs=[st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_voice_dropdown,
+                    gr.State(student_id), gr.State(course_id), gr.State(lesson_id), gr.State(lesson_topic), gr.State(lesson_segment_text)],
+            outputs=[st_chatbot, st_chat_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_mic_input, st_text_input],
+            show_progress="hidden"
+        )
+        st_send_button.click(
+            fn=st_process_turn, 
+            inputs=[st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_voice_dropdown,
+                    gr.State(student_id), gr.State(course_id), gr.State(lesson_id), gr.State(lesson_topic), gr.State(lesson_segment_text)],
+            outputs=[st_chatbot, st_chat_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_mic_input, st_text_input],
+            show_progress="hidden"
+        )
+    return student_demo
+
+
+# --- FastAPI App and Routes ---
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+# Mount Instructor Panel UI
+instructor_ui_instance = build_instructor_ui()
+if instructor_ui_instance:
+    app = gr.mount_gradio_app(app, instructor_ui_instance, path="/instructor") # Changed path
+else:
+    print("ERROR: build_instructor_ui() returned None. Instructor panel not mounted.")
+
+# Templates for serving the initial HTML for the student tutor
+templates = Jinja2Templates(directory="templates") # Create a 'templates' directory
+# You might need to serve static files if your student UI has CSS/JS not handled by Gradio
+# app.mount("/static_student", StaticFiles(directory="static_student"), name="static_student")
+
+
+@app.get("/class", response_class=HTMLResponse)
+async def get_student_lesson_page(request: Request, token: str = None):
+    """
+    Serves the initial HTML page that will then load the Gradio student tutor UI.
+    Validates token and prepares lesson context.
+    """
+    if not token:
+        return HTMLResponse("<h3>Error: Access token missing.</h3>", status_code=400)
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience="https://www.easyaitutor.com")
+        student_id = payload["sub"]
+        course_id = payload["course_id"]
+        lesson_id = int(payload["lesson_id"]) # Ensure it's an int
+        # Expiration is checked by jwt.decode automatically
+
+        # Load course config
+        config_path = CONFIG_DIR / f"{course_id.replace(' ','_').lower()}_config.json"
+        if not config_path.exists():
+            raise HTTPException(status_code=404, detail="Course configuration not found.")
+        
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        full_text = cfg.get("full_text_content", "")
+        lessons_data = cfg.get("lessons", [])
+
+        if not full_text or not lessons_data:
+            raise HTTPException(status_code=404, detail="Lesson content or plan not found in configuration.")
+
+        if not (0 < lesson_id <= len(lessons_data)):
+             raise HTTPException(status_code=404, detail=f"Lesson ID {lesson_id} out of range.")
+
+        # Get specific lesson topic
+        lesson_topic = lessons_data[lesson_id - 1].get("topic_summary", f"Lesson {lesson_id}")
+
+        # Calculate text segment for this lesson
+        num_total_lessons = len(cfg.get("class_dates", lessons_data)) # Use class_dates if available, else len(lessons)
+        if num_total_lessons == 0: num_total_lessons = 1 # Avoid division by zero
+        
+        chars_per_lesson = len(full_text) // num_total_lessons
+        start_char = (lesson_id - 1) * chars_per_lesson
+        end_char = lesson_id * chars_per_lesson if lesson_id < num_total_lessons else len(full_text)
+        lesson_segment_text = full_text[start_char:end_char].strip()
+
+        if not lesson_segment_text:
+            lesson_segment_text = "(No specific text segment for this lesson, focusing on general topic review.)"
+            print(f"Warning: Empty text segment for {course_id}, lesson {lesson_id}")
+
+
+        # This is where you would normally render an HTML page that then loads the Gradio JS
+        # For simplicity with Gradio, we'll mount another Gradio app specifically for the student.
+        # This requires careful handling if many students access it.
+        # A more scalable way is a single student Gradio app whose state is initialized.
+        
+        # We will pass these to the Gradio app for the student.
+        # This is a simplified way; ideally, the Gradio app at /student_tutor_gradio_app
+        # would itself fetch these based on the token via an API or shared context.
+        # For now, we'll pass them conceptually.
+        
+        # The actual Gradio app for the student will be mounted separately.
+        # This HTML response just needs to redirect or embed the Gradio app.
+        # Simplest for now: redirect to the Gradio app path with parameters.
+        # However, Gradio doesn't easily take startup parameters via URL for gr.Blocks.
+        # So, the student Gradio app will need to parse the token from its own request context.
+
+        # For now, let's just return a simple HTML page that tells the user they are being redirected
+        # or that the lesson is loading. The actual Gradio app will be at /student_tutor_interface
+        
+        # This HTML is just a placeholder. The real magic happens when Gradio JS loads for the student UI.
+        # We need to ensure the student_tutor_ui can get the token.
+        # One way: render the token into a JavaScript variable on an HTML page.
+        # Then the Gradio JS for the student UI can pick it up.
+        
+        # Create a simple HTML template (templates/student_view.html)
+        # <!DOCTYPE html>
+        # <html><head><title>Easy AI Tutor Lesson</title></head>
+        # <body>
+        #     <h1>Loading Your Lesson...</h1>
+        #     <script>
+        #         // This token will be used by the Gradio JS when it initializes the student UI
+        #         window.lessonToken = "{{ token }}"; 
+        #         // Redirect or load Gradio JS that points to the student Gradio app mount
+        #         window.location.href = "/student_tutor_interface"; // Or directly embed Gradio JS
+        #     </script>
+        # </body></html>
+        # For now, we will directly mount the student UI and it will have to get the token itself.
+        # This is complex. A simpler Phase 1 might be to pass data via query params to a Gradio app
+        # if Gradio's Blocks API supported easy init with params.
+
+        # Let's assume the student Gradio app is mounted at /student_tutor_interface
+        # and it will handle token extraction from its own request context when it loads.
+        # This HTML is just a conceptual shell.
+        return HTMLResponse(f"""
+            <html>
+                <head><title>Easy AI Tutor Lesson</title></head>
+                <body>
+                    <h2>Preparing your lesson for Course: {course_id}, Lesson: {lesson_id} ({lesson_topic})</h2>
+                    <p>Student ID: {student_id}</p>
+                    <p>If the lesson does not load automatically, please ensure JavaScript is enabled and refresh.</p>
+                    <p>Token (for debug): {token}</p>
+                    
+                    {'''
+                    <!-- This is where the Gradio app for the student would be embedded or linked -->
+                    <!-- For a single-page app feel, the Gradio JS for the student UI would initialize here -->
+                    <!-- For now, we will mount a separate Gradio app at /student_tutor_interface -->
+                    <p><a href="/student_tutor_interface?token={token}">Click here to start your lesson if not redirected.</a></p>
+                    <script>
+                        // Optional: auto-redirect
+                        // window.location.href = "/student_tutor_interface?token={token}";
+                    </script>
+                    '''}
+                </body>
+            </html>
+        """)
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Access token has expired.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid access token.")
+    except HTTPException as e: # Re-raise HTTPExceptions
+        raise e
+    except Exception as e:
+        print(f"Error processing /class request: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Error preparing lesson: {e}")
+
+# --- Build and Mount Student Tutor UI ---
+# This is tricky. We need to pass data to it.
+# A global variable or a more complex setup is needed if we mount it directly.
+# For Phase 1, the student UI will be simpler and might need to re-validate the token.
+
+# Let's define a global to hold the student UI instance, to be created on first valid access.
+# This is NOT ideal for concurrent users but simplifies initial integration.
+# A better way is a factory function for the Gradio app.
+
+# This is a simplified student UI for now, it will need to be enhanced
+# to take the token and initialize itself.
+# For now, it's a placeholder to show mounting.
+# The actual student tutor logic from your script needs to be integrated here.
+
+# We will create the student UI on demand when /student_tutor_interface is hit.
+# This is still not ideal for Gradio's standard mounting.
+
+# A better approach for dynamic student UI with Gradio:
+# The /class endpoint serves a basic HTML page.
+# This HTML page includes JavaScript that makes an API call (e.g., to /api/lesson_context?token=...)
+# This API call returns the lesson_topic, lesson_segment_text.
+# The JavaScript then initializes a Gradio *Interface* (not Blocks) dynamically, or
+# updates components in a pre-loaded Gradio Blocks UI.
+
+# For this iteration, let's make the student_tutor_ui a function that takes context
+# and then try to mount it. This is still complex for gr.mount_gradio_app.
+
+# The most straightforward way with gr.mount_gradio_app is to have a single student UI
+# that then uses JavaScript to get the token from the URL and initialize its state.
+# Gradio's Python `gr.State` is per-session, so this can work.
+
+# Let's adapt the student tutor script to be a function that builds the UI,
+# and its internal callbacks will need to access the token from the request if possible,
+# or we pass it via gr.State initialized by a FastAPI route.
+
+# This is where the student tutor UI from your script would be adapted and built.
+# For now, this is a placeholder. The actual `build_student_tutor_ui`
+# from the previous step needs to be fully integrated here.
+# The challenge is passing the dynamic lesson_context to it effectively.
+
+# --- FastAPI App Setup (Continued) ---
 @app.on_event("startup")
 async def startup_event():
     scheduler.add_job(send_daily_class_reminders, trigger=CronTrigger(hour=5, minute=50, timezone='UTC'), id="daily_reminders", name="Daily Class Reminders", replace_existing=True)
     scheduler.add_job(check_student_progress_and_notify_professor, trigger=CronTrigger(hour=18, minute=0, timezone='UTC'), id="progress_check", name="Student Progress Check", replace_existing=True)
-    if not scheduler.running: 
-        scheduler.start()
-        print("APScheduler started.")
-    else: 
-        print("APScheduler already running.")
-    print("Scheduled jobs:")
-    for job in scheduler.get_jobs(): 
-        print(f"  Job: {job.id}, Name: {job.name}, Trigger: {job.trigger}")
+    if not scheduler.running: scheduler.start(); print("APScheduler started.")
+    else: print("APScheduler already running.")
+    for job in scheduler.get_jobs(): print(f"  Job: {job.id}, Name: {job.name}, Trigger: {job.trigger}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    if scheduler.running: 
-        scheduler.shutdown()
-        print("APScheduler shutdown.")
+    if scheduler.running: scheduler.shutdown(); print("APScheduler shutdown.")
 
-gradio_app_instance = build_ui()
-if gradio_app_instance is None:
-    print("ERROR: build_ui() returned None. Gradio app cannot be mounted.")
-else:
-    app = gr.mount_gradio_app(app, gradio_app_instance, path="/")
+# The student tutor UI will be more complex to integrate directly here for dynamic content per link.
+# A common pattern is to have the student UI make an API call with its token to get lesson data.
+# For now, we will mount the instructor UI. The /class endpoint is a placeholder for how
+# the student UI would be initiated.
+
+# The student_tutor_ui_instance would be created by build_student_tutor_ui
+# student_tutor_ui_instance = build_student_tutor_ui( DYNAMIC PARAMS NEEDED HERE )
+# app = gr.mount_gradio_app(app, student_tutor_ui_instance, path="/student_tutor_interface")
+
 
 @app.get("/healthz")
 def healthz(): return {"status":"ok", "scheduler_running": scheduler.running if 'scheduler' in globals() and scheduler else False}
 
 if __name__ == "__main__":
-    print("Starting Gradio UI locally. For production, use Uvicorn: uvicorn your_script_name:app --host 0.0.0.0 --port $PORT")
-    if 'gradio_app_instance' in globals() and gradio_app_instance is not None:
-        gradio_app_instance.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT",7860)))
-        try:
-            while True: time.sleep(2) 
-        except (KeyboardInterrupt, SystemExit):
-            print("Shutting down scheduler (if running)...")
-            if 'scheduler' in globals() and scheduler.running: 
-                scheduler.shutdown()
-    else:
-        print("ERROR: Gradio app instance not created. Cannot launch.")
+    print("Starting App. Instructor Panel at /instructor. Student access via /class?token=...")
+    # Note: The student UI part is not fully mounted as a dynamic Gradio app in this simplified __main__.
+    # For full functionality, the /class endpoint needs to properly serve/initiate the student Gradio UI.
+    # This usually involves more advanced FastAPI/Gradio integration patterns or a separate student app.
+    
+    # To run this: uvicorn main_script_name:app --reload --port 8000
+    # Then access http://localhost:8000/instructor
+    
+    # For local testing of Gradio UI directly (without full FastAPI routing for /class)
+    # instructor_ui_instance.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT",7860)))
+
+    # The FastAPI app should be run with Uvicorn for both instructor and student parts to work via HTTP.
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+
+    # Keep main thread alive for scheduler if not using uvicorn's lifecycle for it
+    # This is generally handled by uvicorn when running the FastAPI app.
+    # try:
+    #     while True: time.sleep(2) 
+    # except (KeyboardInterrupt, SystemExit):
+    #     print("Shutting down scheduler (if running)...")
+    #     if 'scheduler' in globals() and scheduler.running: 
+    #         scheduler.shutdown()
