@@ -376,9 +376,35 @@ def generate_plan_callback(course_name_from_input):
         if not path.exists(): return error_return_for_plan(f"⚠️ Error: Config for '{course_name_from_input}' not found.")
         cfg = json.loads(path.read_text(encoding="utf-8"))
         formatted_plan_str, structured_lessons_list = generate_plan_by_week_structured_and_formatted(cfg)
-        cfg["lessons"], cfg["lesson_plan_formatted"] = structured_lessons_list, formatted_plan_str
+        
+        cfg["lessons"] = structured_lessons_list # This is crucial for the scheduler
+        cfg["lesson_plan_formatted"] = formatted_plan_str
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-        return (gr.update(value=formatted_plan_str, visible=True, interactive=False), None, None, gr.update(visible=False), None, None, gr.update(visible=True), gr.update(visible=True)) # Hide generate button on success
+
+        # --- ADDED NOTIFICATION MESSAGE LOGIC ---
+        class_days_str = ", ".join(cfg.get("class_days", ["configured schedule"])) # Get class days from cfg
+
+        notification_message = (
+            f"\n\n---\n"
+            f"✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
+            f"Students in this course will now receive emails with a unique link "
+            f"to their AI Tutor lesson on each scheduled class day ({class_days_str}). "
+            f"Links are active from 6 AM to 12 PM UTC on those days."
+        )
+        display_text_for_plan_box = formatted_plan_str + notification_message
+        # --- END ADDED NOTIFICATION MESSAGE LOGIC ---
+        
+        # Updated success return:
+        return (
+            gr.update(value=display_text_for_plan_box, visible=True, interactive=False), # 1. output_plan_box (now includes notification)
+            None, # 2. dummy_btn_save
+            None, # 3. dummy_btn_show_syllabus
+            gr.update(visible=False),  # 4. btn_generate_plan (HIDE ON SUCCESS)
+            None, # 5. dummy_btn_edit_syl
+            None, # 6. dummy_btn_email_syl
+            gr.update(visible=True),   # 7. btn_edit_plan (now visible)
+            gr.update(visible=True)    # 8. btn_email_plan (now visible)
+        )
     except openai.APIError as oai_err: print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}"); return error_return_for_plan(f"⚠️ OpenAI API Error: {oai_err}.")
     except Exception as e: print(f"Error in generate_plan_callback: {e}\n{traceback.format_exc()}"); return error_return_for_plan(f"⚠️ Error: {e}")
 
