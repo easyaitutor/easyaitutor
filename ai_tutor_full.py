@@ -613,12 +613,13 @@ def handle_contact_submission(name, email_addr, message_content_from_box, attach
                         attachment_file
                     )
 
-        # Ensure the .click handler is correctly defined:
-        # btn_send_contact_email.click(
-        #     handle_contact_submission,
-        #     inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
-        #     outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment] 
-        # )
+        btn_send_contact_email.click(
+        handle_contact_submission,
+        inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
+        outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment] 
+    )
+# End of with gr.Blocks() as demo:
+return demo
 
 # --- FastAPI Mounting & Main Execution ---
 app = FastAPI()
