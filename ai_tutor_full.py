@@ -131,23 +131,69 @@ def generate_access_token(student_id, course_id, lesson_id, lesson_date_obj):
 def generate_5_digit_code(): return str(random.randint(10000, 99999))
 
 def send_email_notification(to_email, subject, html_content, from_name="User", attachment_file_obj=None):
-    if not SMTP_USER or not SMTP_PASS: print(f"SMTP not configured for {to_email}"); return False
-    msg = EmailMessage(); msg["Subject"], msg["From"], msg["To"] = subject, SMTP_USER, to_email
+    if not SMTP_USER or not SMTP_PASS:
+        print(f"CRITICAL SMTP ERROR: SMTP_USER or SMTP_PASS not configured. Cannot send email to {to_email}.")
+        return False # Explicitly return False
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = f"AI Tutor Panel <{SMTP_USER}>" # Use a display name
+    msg["To"] = to_email
+    # If sending a contact form *to yourself*, Reply-To should be the user's email
+    if to_email.lower() == SMTP_USER.lower() and "@" in from_name: # from_name here is the user's email
+         msg.add_header('Reply-To', from_name)
+
     msg.add_alternative(html_content, subtype='html')
-    if attachment_file_obj and hasattr(attachment_file_obj, "name"):
+
+    if attachment_file_obj and hasattr(attachment_file_obj, "name") and attachment_file_obj.name:
         try:
             with open(attachment_file_obj.name, 'rb') as fp:
                 file_data = fp.read()
-                ctype, _ = mimetypes.guess_type(attachment_file_obj.name)
-                if ctype is None: ctype = 'application/octet-stream'
-                maintype, subtype = ctype.split('/', 1)
-                msg.add_attachment(file_data, maintype=maintype, subtype=subtype, filename=os.path.basename(attachment_file_obj.name))
-            print(f"Attached {os.path.basename(attachment_file_obj.name)}.")
-        except Exception as e_attach: print(f"Error attaching {attachment_file_obj.name}: {e_attach}")
+            
+            ctype, encoding = mimetypes.guess_type(attachment_file_obj.name)
+            if ctype is None or encoding is not None: # If encoding is not None, it's likely text
+                ctype = 'application/octet-stream' # Default for unknown binary
+            maintype, subtype_val = ctype.split('/', 1) # Renamed subtype to avoid conflict
+            
+            msg.add_attachment(file_data,
+                               maintype=maintype,
+                               subtype=subtype_val, # Use renamed variable
+                               filename=os.path.basename(attachment_file_obj.name))
+            print(f"Attachment {os.path.basename(attachment_file_obj.name)} prepared for email.")
+        except FileNotFoundError:
+            print(f"Error attaching file: File not found at {attachment_file_obj.name}")
+            # Optionally, you could decide to send the email without the attachment or fail here.
+            # For now, let's try to send without if attachment fails this way.
+            # To make it fail, return False here:
+            # return False 
+        except Exception as e_attach:
+            print(f"Error processing attachment {attachment_file_obj.name}: {e_attach}")
+            # return False # Optionally fail if attachment processing fails
+
     try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s: s.starttls(); s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
-        print(f"Email sent to {to_email}"); return True
-    except Exception as e: print(f"Failed to send email to {to_email}: {e}\n{traceback.format_exc()}"); return False
+        print(f"Attempting to send email to {to_email} via {SMTP_SERVER}:{SMTP_PORT} as {SMTP_USER}...")
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as s: # Added timeout
+            s.set_debuglevel(1) # Enable SMTP debug output to console
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASS)
+            s.send_message(msg)
+        print(f"Email successfully sent to {to_email} with subject: {subject}")
+        return True
+    except smtplib.SMTPAuthenticationError as e_auth:
+        print(f"SMTP Authentication Error for {SMTP_USER}: {e_auth}\n{traceback.format_exc()}")
+        return False
+    except smtplib.SMTPConnectError as e_conn:
+        print(f"SMTP Connection Error to {SMTP_SERVER}:{SMTP_PORT}: {e_conn}\n{traceback.format_exc()}")
+        return False
+    except smtplib.SMTPServerDisconnected as e_disconn:
+        print(f"SMTP Server Disconnected: {e_disconn}\n{traceback.format_exc()}")
+        return False
+    except smtplib.SMTPException as e_smtp_general: # Catch other specific SMTP errors
+        print(f"General SMTP Exception sending to {to_email}: {e_smtp_general}\n{traceback.format_exc()}")
+        return False
+    except Exception as e: # Catch any other unexpected errors
+        print(f"Unexpected error sending email to {to_email}: {e}\n{traceback.format_exc()}")
+        return False
 
 # --- Syllabus & Lesson Plan Generation ---
 def generate_syllabus(cfg):
@@ -488,81 +534,91 @@ def build_ui():
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
         
         # --- Contact Form Callback Definition (Correctly Indented within build_ui) ---
-        def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
+def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
             errors = []
             if not name.strip(): errors.append("Name is required.")
             if not email_addr.strip(): errors.append("Email Address is required.")
             elif "@" not in email_addr: errors.append("A valid Email Address (containing '@') is required.")
-            
-            if not message_content_from_box.strip(): 
-                errors.append("Message is required.")
+            if not message_content_from_box.strip(): errors.append("Message is required.")
 
             if errors:
                 error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
-                # Update contact_message (the Textbox) with the error, clear status_output, keep name/email, keep attachment
-                return (
-                    gr.update(value=""),  # 1. Clear contact_status_output (Markdown)
-                    None,                 # 2. Keep name field as is
-                    None,                 # 3. Keep email field as is
-                    gr.update(value=error_text), # 4. UPDATE MESSAGE BOX with error text
-                    None                  # 5. Keep attachment as is
-                )
+                return (gr.update(value=""), None, None, gr.update(value=error_text), None)
 
-            # --- Send Email (only if validation passed) ---
+            # --- Show Sending Status ---
+            # This yield updates the UI and then the function continues.
+            # The outputs must match the .click handler's outputs list.
             yield (
-                gr.update(value="<p>Sending...</p>"), # To contact_status_output
-                None, # Keep Name
-                None, # Keep Email
-                gr.update(value=""), # Clear message box
-                None  # Keep attachment for now
-            )
-
-            subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
-            to_support_email = "easyaitutor@gmail.com" 
-            html_body = f"""
-            <html><body>
-                <h3>New Contact Request from AI Tutor Panel</h3>
-                <p><strong>Name:</strong> {name}</p>
-                <p><strong>Email (for reply):</strong> {email_addr}</p>
-                <hr>
-                <p><strong>Message:</strong></p>
-                <p>{message_content_from_box.replace(chr(10), '<br>')}</p>
-            </body></html>
-            """
-            
-            success = send_email_notification(
-                to_email=to_support_email, 
-                subject=subject,
-                html_content=html_body,
-                from_name=email_addr, 
-                attachment_file_obj=attachment_file
+                gr.update(value="<p><i>Sending message... Please wait.</i></p>"), # contact_status_output
+                None, # contact_name (no change)
+                None, # contact_email_addr (no change)
+                gr.update(value=""), # contact_message (clear it as it's being sent)
+                None  # contact_attachment (no change yet)
             )
             
-            if success: 
-                return (
-                    gr.update(value="<p style='color:green;'>Message sent successfully!</p>"), 
-                    gr.update(value=""), 
-                    gr.update(value=""), 
-                    gr.update(value=""), 
-                    gr.update(value=None) 
-                )
-            else: 
-                return (
-                    gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later.</p>"), 
-                    None, 
-                    None, 
-                    gr.update(value=message_content_from_box), 
-                    attachment_file 
-                )
+            time.sleep(0.1) # Small delay to ensure Gradio processes the yield update
 
-        # --- Attach the callback to the button ---
-        btn_send_contact_email.click(
-            handle_contact_submission,
-            inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
-            outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment] 
-        )
-    # End of with gr.Blocks() as demo:
-    return demo
+            # --- Attempt to Send Email ---
+            try:
+                subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
+                to_support_email = "easyaitutor@gmail.com" 
+                html_body = f"""
+                <html><body>
+                    <h3>New Contact Request from AI Tutor Panel</h3>
+                    <p><strong>Name:</strong> {name}</p>
+                    <p><strong>Email (for reply):</strong> {email_addr}</p>
+                    <hr>
+                    <p><strong>Message:</strong></p>
+                    <p>{message_content_from_box.replace(chr(10), '<br>')}</p>
+                </body></html>
+                """
+                
+                print(f"Preparing to send contact email from {name} <{email_addr}>.")
+                success = send_email_notification(
+                    to_email=to_support_email, 
+                    subject=subject,
+                    html_content=html_body,
+                    from_name=email_addr, 
+                    attachment_file_obj=attachment_file
+                )
+                
+                if success: 
+                    print("Contact email sent successfully.")
+                    return (
+                        gr.update(value="<p style='color:green;'>Message sent successfully! We will get back to you shortly.</p>"), 
+                        gr.update(value=""), 
+                        gr.update(value=""), 
+                        gr.update(value=""), 
+                        gr.update(value=None) 
+                    )
+                else: 
+                    print("Contact email sending failed (send_email_notification returned False).")
+                    # If send_email_notification returned False, it means an error occurred there.
+                    # The specific error should have been printed by send_email_notification.
+                    return (
+                        gr.update(value="<p style='color:red;'>Error: Could not send message. SMTP issue or attachment error. Please check server logs.</p>"), 
+                        None, 
+                        None, 
+                        gr.update(value=message_content_from_box), # Restore message
+                        attachment_file # Keep attachment
+                    )
+            except Exception as e_handler:
+                # Catch any unexpected error within this try block of handle_contact_submission
+                print(f"Unexpected error in handle_contact_submission after yield: {e_handler}\n{traceback.format_exc()}")
+                return (
+                        gr.update(value=f"<p style='color:red;'>Critical Error: An unexpected issue occurred: {e_handler}.</p>"), 
+                        None, 
+                        None, 
+                        gr.update(value=message_content_from_box),
+                        attachment_file
+                    )
+
+        # Ensure the .click handler is correctly defined:
+        # btn_send_contact_email.click(
+        #     handle_contact_submission,
+        #     inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
+        #     outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment] 
+        # )
 
 # --- FastAPI Mounting & Main Execution ---
 app = FastAPI()
