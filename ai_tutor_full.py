@@ -12,18 +12,19 @@ import mimetypes # For contact form attachment
 
 import openai
 import gradio as gr
-from docx import Document
+from docx import Document # For creating DOCX files
 import smtplib
 from email.message import EmailMessage
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-import jwt
-import requests
+import jwt # PyJWT for access tokens
+import requests # For calling external APIs (student progress)
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+# Attempt to import fitz (PyMuPDF)
 try:
     import fitz
     fitz_available = True
@@ -41,7 +42,7 @@ SMTP_USER = os.getenv("SMTP_USER")
 SMTP_PASS = os.getenv("SMTP_PASS")
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-this-super-secret-key-in-production")
 if JWT_SECRET_KEY == "change-this-super-secret-key-in-production":
-    print("WARNING: JWT_SECRET_KEY is set to its default insecure value.")
+    print("WARNING: JWT_SECRET_KEY is set to its default insecure value. Please set a strong secret key.")
 LINK_VALIDITY_HOURS = 6
 EASYAI_TUTOR_PROGRESS_API_ENDPOINT = os.getenv("EASYAI_TUTOR_PROGRESS_API_ENDPOINT")
 days_map = {"Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4, "Saturday": 5, "Sunday": 6}
@@ -85,7 +86,7 @@ def split_sections(pdf_file_obj_for_sections):
             sections = [s for s in sections if len(s['content']) > len(s['title']) + 20]
             print(f"DEBUG: split_sections (fitz) found {len(headings)}h, returning {len(sections)} sections.")
             return sections
-        except Exception as e_fitz: print(f"Error fitz splitting: {e_fitz}. Fallback."); # Fall through
+        except Exception as e_fitz: print(f"Error fitz splitting: {e_fitz}. Fallback.");
     try:
         from PyPDF2 import PdfReader
         print("Using PyPDF2 for section splitting.");
@@ -108,7 +109,9 @@ def download_docx(content, filename):
     for line in content.split("\n"):
         p = doc.add_paragraph()
         parts = re.split(r'(\*\*.*?\*\*)', line)
-        for part in parts: p.add_run(part[2:-2]).bold = True if part.startswith('**') and part.endswith('**') else p.add_run(part)
+        for part in parts:
+            if part.startswith('**') and part.endswith('**'): p.add_run(part[2:-2]).bold = True
+            else: p.add_run(part)
     doc.save(buf); buf.seek(0); return buf, filename
 
 def count_classes(sd, ed, wdays):
@@ -163,7 +166,7 @@ def generate_plan_by_week_structured_and_formatted(cfg):
     if not class_dates: return "No class dates.", []
     full_text, char_map = cfg.get("full_text_content", ""), cfg.get("char_offset_page_map", [])
     if not full_text.strip():
-        print("Warning: Full text empty."); # Fallback logic as before...
+        print("Warning: Full text empty."); 
         placeholder_lessons, placeholder_lines, weeks_ph = [], [], {}
         for idx, dt in enumerate(class_dates):
             wk_key = f"{dt.isocalendar()[0]}-W{dt.isocalendar()[1]:02d}"
@@ -187,9 +190,9 @@ def generate_plan_by_week_structured_and_formatted(cfg):
         else:
             try:
                 print(f"DEBUG: Summarizing seg {i+1} (len {len(seg_text)}): '{seg_text[:70].replace(chr(10),' ')}...'")
-                resp = openai.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role":"system","content":"Identify core concept. Respond ONLY with short phrase (max 10-12 words) as lesson topic, preferably gerund (e.g., 'Using verbs'). NO full sentences."}, {"role":"user","content": seg_text}], temperature=0.4, max_tokens=30)
+                resp = openai.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role":"system","content":"Identify core concept. Respond ONLY with short phrase (max 10-12 words) as lesson topic title, preferably gerund (e.g., 'Using verbs'). NO full sentences."}, {"role":"user","content": seg_text}], temperature=0.4, max_tokens=30)
                 summaries.append(resp.choices[0].message.content.strip().replace('"', '').capitalize())
-            except Exception as e: print(f"Error summarizing seg {i+1}: {e}"); summaries.append(f"Topic seg {i+1} (Error)")
+            except Exception as e: print(f"Error summarizing seg {i+1}: {e}"); summaries.append(f"Topic seg {i+1} (Summary Error)")
     
     lessons_by_week, structured_lessons = {}, []
     for idx, dt in enumerate(class_dates):
@@ -211,12 +214,74 @@ def generate_plan_by_week_structured_and_formatted(cfg):
         formatted_lines.append('')
     return "\n".join(formatted_lines), structured_lessons
 
-# --- APScheduler Jobs (send_daily_class_reminders, check_student_progress_and_notify_professor) ---
-# These are assumed to be correct from previous versions and are lengthy.
-# For brevity here, I'll include placeholders but ensure they are in your actual full code.
-def send_daily_class_reminders(): print("SCHEDULER: send_daily_class_reminders called") # Placeholder
-def check_student_progress_and_notify_professor(): print("SCHEDULER: check_student_progress_and_notify_professor called") # Placeholder
-# (Make sure the full implementations of these scheduler jobs are in your script)
+# --- APScheduler Setup ---
+scheduler = BackgroundScheduler(timezone="UTC") # DEFINED GLOBALLY
+
+# --- Scheduler Jobs ---
+def send_daily_class_reminders():
+    print(f"SCHEDULER: Running daily class reminder job at {datetime.now(dt_timezone.utc)}")
+    today_utc = datetime.now(dt_timezone.utc).date()
+    for config_file in CONFIG_DIR.glob("*_config.json"):
+        try:
+            cfg = json.loads(config_file.read_text(encoding="utf-8"))
+            course_id, course_name = config_file.stem.replace("_config", ""), cfg.get("course_name", "N/A")
+            if not cfg.get("lessons") or not cfg.get("students"): continue
+            for lesson in cfg["lessons"]:
+                lesson_date = datetime.strptime(lesson["date"], '%Y-%m-%d').date()
+                if lesson_date == today_utc:
+                    print(f"SCHEDULER: Class found for {course_name} today: Lesson {lesson['lesson_number']}")
+                    class_code = generate_5_digit_code()
+                    for student in cfg["students"]:
+                        student_id, student_email, student_name = student.get("id", "unknown"), student.get("email"), student.get("name", "Student")
+                        if not student_email: continue
+                        token = generate_access_token(student_id, course_id, lesson["lesson_number"], lesson_date)
+                        access_link = f"https://www.easyaitutor.com/class?token={token}"
+                        email_subject = f"Today's Class Link for {course_name}: {lesson['topic_summary']}"
+                        email_html_body = f"""
+                        <html><head><style>body {{font-family: sans-serif;}} strong {{color: #007bff;}} a {{color: #0056b3;}} .container {{padding: 20px; border: 1px solid #ddd; border-radius: 5px;}} .code {{font-size: 1.5em; font-weight: bold; background-color: #f0f0f0; padding: 5px 10px;}}</style></head>
+                        <body><div class="container">
+                            <p>Hi {student_name},</p>
+                            <p>Your class for <strong>{course_name}</strong> - "{lesson['topic_summary']}" - is today!</p>
+                            <p>Access link: <a href="{access_link}">{access_link}</a></p>
+                            <p>5-digit code: <span class="code">{class_code}</span></p>
+                            <p>Valid from <strong>6:00 AM to 12:00 PM UTC</strong> today ({today_utc.strftime('%B %d, %Y')}).</p>
+                            <p>Best regards,<br>AI Tutor System</p>
+                        </div></body></html>"""
+                        send_email_notification(student_email, email_subject, email_html_body, student_name)
+        except Exception as e: print(f"SCHEDULER: Error in daily reminders for {config_file.name}: {e}\n{traceback.format_exc()}")
+
+def check_student_progress_and_notify_professor():
+    print(f"SCHEDULER: Running student progress check at {datetime.now(dt_timezone.utc)}")
+    if not EASYAI_TUTOR_PROGRESS_API_ENDPOINT: print("SCHEDULER: EASYAI_TUTOR_PROGRESS_API_ENDPOINT not set. Skipping."); return
+    yesterday_utc = datetime.now(dt_timezone.utc).date() - timedelta(days=1)
+    for config_file in CONFIG_DIR.glob("*_config.json"):
+        try:
+            cfg = json.loads(config_file.read_text(encoding="utf-8"))
+            course_id, course_name = config_file.stem.replace("_config", ""), cfg.get("course_name", "N/A")
+            instructor_cfg = cfg.get("instructor", {}); instructor_email, instructor_name = instructor_cfg.get("email"), instructor_cfg.get("name", "Instructor")
+            if not instructor_email or not cfg.get("students") or not cfg.get("lessons"): continue
+            for lesson in cfg.get("lessons", []):
+                lesson_date = datetime.strptime(lesson["date"], '%Y-%m-%d').date()
+                if lesson_date != yesterday_utc: continue
+                lesson_id_for_api = lesson["lesson_number"]; print(f"SCHEDULER: Checking progress for {course_name}, Lesson {lesson_id_for_api}")
+                for student in cfg.get("students", []):
+                    student_id, student_name = student.get("id"), student.get("name", "Student")
+                    if not student_id: continue
+                    try:
+                        response = requests.get(EASYAI_TUTOR_PROGRESS_API_ENDPOINT, params={"course_id": course_id, "student_id": student_id, "lesson_id": lesson_id_for_api}, timeout=10)
+                        response.raise_for_status(); progress_data = response.json()
+                        quiz_score, engagement = progress_data.get("quiz_score"), progress_data.get("engagement_level")
+                        needs_attention, reasons = False, []
+                        if quiz_score is not None and isinstance(quiz_score, (int, float)) and quiz_score < 60: needs_attention, reasons = True, reasons + [f"Quiz score {quiz_score}% (<60%)"]
+                        if isinstance(engagement, str) and engagement.lower() == "low": needs_attention, reasons = True, reasons + ["Low engagement reported"]
+                        if needs_attention:
+                            print(f"SCHEDULER: Alert for {student_name}, {course_name}, lesson {lesson_id_for_api}.")
+                            subject = f"Student Progress Alert: {student_name} in {course_name}"; reasons_html = "".join([f"<li>{r}</li>" for r in reasons])
+                            details_url = progress_data.get('details_url'); details_link_html = f"<p>Details: <a href='{details_url}'>View Progress</a></p>" if details_url else ""
+                            body_html = f"""<html><body><p>Dear {instructor_name},</p><p>Alert for <strong>{student_name}</strong> in <strong>{course_name}</strong> (Lesson "{lesson.get('topic_summary', lesson_id_for_api)}", Date: {lesson_date.strftime('%B %d, %Y')}):</p><ul>{reasons_html}</ul>{details_link_html}<p>Please consider engaging with the student.</p><p>AI Tutor Monitoring</p></body></html>"""
+                            send_email_notification(instructor_email, subject, body_html, instructor_name)
+                    except Exception as e_prog: print(f"SCHEDULER: Error processing progress for {student_name}: {e_prog}")
+        except Exception as e_course: print(f"SCHEDULER: Error in progress check for {config_file.name}: {e_course}")
 
 # --- Gradio Callbacks ---
 def _get_syllabus_text_from_config(course_name_str):
@@ -233,98 +298,111 @@ def _get_plan_text_from_config(course_name_str):
     try: return json.loads(path.read_text(encoding="utf-8")).get("lesson_plan_formatted", "Plan not generated.")
     except Exception as e: return f"Error loading plan: {e}"
 
-def enable_edit_syllabus_and_reload(course_name, current_output):
-    if not current_output.strip().startswith("Course Name:"):
-        return gr.update(value=_get_syllabus_text_from_config(course_name), interactive=True)
+def enable_edit_syllabus_and_reload(current_course_name, current_output_content):
+    if not current_output_content.strip().startswith("Course:"): # Adjusted to match new syllabus format
+        syllabus_text = _get_syllabus_text_from_config(current_course_name)
+        return gr.update(value=syllabus_text, interactive=True)
     return gr.update(interactive=True)
 
-def enable_edit_plan_and_reload(course_name, current_output):
-    if not current_output.strip().startswith("**Week") and \
-       (current_output.strip().startswith("✅") or current_output.strip().startswith("⚠️")):
-        return gr.update(value=_get_plan_text_from_config(course_name), interactive=True)
+def enable_edit_plan_and_reload(current_course_name_for_plan, current_plan_output_content):
+    if not current_plan_output_content.strip().startswith("**Week") and \
+       (current_plan_output_content.strip().startswith("✅") or \
+        current_plan_output_content.strip().startswith("⚠️")):
+        plan_text = _get_plan_text_from_config(current_course_name_for_plan)
+        return gr.update(value=plan_text, interactive=True)
     return gr.update(interactive=True)
 
-def save_setup(course, instr_name, instr_email, devices, pdf, sy, sm, sd, ey, em, ed, days_selected, students_str):
-    num_expected_outputs = 13
-    def err_ret(msg): return (gr.update(value=msg, visible=True, interactive=False), gr.update(visible=True), None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(value="", visible=False), gr.update(visible=True), gr.update(visible=False))
+def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, sd_day, ey, em, ed_day, class_days_selected, students_input_str):
+    num_expected_outputs = 13 
+    def error_return_tuple(error_message_str):
+        return (gr.update(value=error_message_str, visible=True, interactive=False), gr.update(visible=True), None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(value="", visible=False), gr.update(visible=True), gr.update(visible=False))
     try:
-        if not all([course, instr_name, instr_email, pdf, sy, sm, sd, ey, em, ed, days_selected]): return err_ret("⚠️ Error: All * fields required.")
+        if not all([course_name, instr_name, instr_email, pdf_file, sy, sm, sd_day, ey, em, ed_day, class_days_selected]): return error_return_tuple("⚠️ Error: All fields marked with * are required.")
         try:
-            start_dt, end_dt = datetime(int(sy),int(sm),int(sd)), datetime(int(ey),int(em),int(ed))
-            if end_dt <= start_dt: return err_ret("⚠️ Error: End date must be after start.")
-        except ValueError: return err_ret("⚠️ Error: Invalid date.")
-        
-        sections_desc = split_sections(pdf)
-        if not sections_desc or (len(sections_desc)==1 and "Error" in sections_desc[0]['title']): return err_ret("⚠️ Error: PDF section extraction failed.")
+            start_dt, end_dt = datetime(int(sy), int(sm), int(sd_day)), datetime(int(ey), int(em), int(ed_day))
+            if end_dt <= start_dt: return error_return_tuple("⚠️ Error: End date must be after start date.")
+        except ValueError: return error_return_tuple("⚠️ Error: Invalid date selected.")
 
-        full_txt, char_map, char_offset = "", [], 0; fitz_ok_full = fitz_available
-        if fitz_ok_full:
-            doc_full = None
+        sections_for_desc_obj = split_sections(pdf_file)
+        if not sections_for_desc_obj or (len(sections_for_desc_obj) == 1 and "Error" in sections_for_desc_obj[0]['title']):
+             return error_return_tuple("⚠️ Error: Could not extract structural sections from PDF for analysis.")
+
+        full_pdf_text, char_offset_to_page_map, current_char_offset = "", [], 0
+        fitz_available_for_full_text = fitz_available 
+        if fitz_available_for_full_text:
+            doc_for_full_text = None
             try:
-                if hasattr(pdf, "seek"): pdf.seek(0)
-                if hasattr(pdf, "name"): doc_full = fitz.open(pdf.name)
-                elif hasattr(pdf, "read"): pdf_bytes = pdf.read(); pdf.seek(0); doc_full = fitz.open(stream=pdf_bytes, filetype="pdf")
-                if doc_full:
-                    for pg_idx, pg_obj in enumerate(doc_full):
-                        pg_txt = pg_obj.get_text("text", sort=True)
-                        if pg_txt: char_map.append((char_offset, pg_idx + 1)); full_txt += pg_txt + "\n"; char_offset += len(pg_txt) + 1
-                    doc_full.close()
-                else: fitz_ok_full = False
-            except Exception as e: print(f"Error fitz full text: {e}"); fitz_ok_full = False
-        if not fitz_ok_full or not full_txt.strip():
-            print("Warning: Fitz failed for full text or text empty. Using structural sections content.");
-            if hasattr(pdf, "seek"): pdf.seek(0)
-            temp_sections = split_sections(pdf) # Re-split if needed, might use PyPDF2
-            full_txt = "\n".join(s['content'] for s in temp_sections); char_map = []
-        if not full_txt.strip(): return err_ret("⚠️ Error: PDF text empty.")
+                if hasattr(pdf_file, "seek"): pdf_file.seek(0)
+                if hasattr(pdf_file, "name"): doc_for_full_text = fitz.open(pdf_file.name)
+                elif hasattr(pdf_file, "read"):
+                    pdf_bytes = pdf_file.read(); pdf_file.seek(0)
+                    doc_for_full_text = fitz.open(stream=pdf_bytes, filetype="pdf")
+                if doc_for_full_text:
+                    for page_num_fitz, page_obj in enumerate(doc_for_full_text):
+                        page_text = page_obj.get_text("text", sort=True) 
+                        if page_text: char_offset_to_page_map.append((current_char_offset, page_num_fitz + 1)); full_pdf_text += page_text + "\n"; current_char_offset += len(page_text) + 1
+                    doc_for_full_text.close()
+                else: fitz_available_for_full_text = False 
+            except Exception as e_fitz_full: print(f"Error extracting full text with fitz: {e_fitz_full}"); fitz_available_for_full_text = False
+        
+        if not fitz_available_for_full_text or not full_pdf_text.strip(): 
+            print("Warning: Fitz failed or not used for full text extraction, using concatenated sections. Page map will be empty or less accurate.")
+            if hasattr(pdf_file, "seek"): pdf_file.seek(0) 
+            temp_sections = split_sections(pdf_file) 
+            full_pdf_text = "\n".join(s['content'] for s in temp_sections); char_offset_to_page_map = []
+        
+        if not full_pdf_text.strip(): return error_return_tuple("⚠️ Error: Extracted PDF text is empty.")
 
-        desc_ai_content = "\n\n".join(f"T: {s['title']}\nS: {s['content'][:1000]}" for s in sections_desc)
-        r1 = openai.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role":"system","content":"Concise course description (2-3 sentences)."},{"role":"user","content": desc_ai_content}])
+        full_content_for_ai_desc = "\n\n".join(f"Title: {s['title']}\nSnippet: {s['content'][:1000]}" for s in sections_for_desc_obj)
+        r1 = openai.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role":"system","content":"Generate a concise course description (2-3 sentences)."},{"role":"user","content": full_content_for_ai_desc}])
         desc = r1.choices[0].message.content.strip()
-        r2 = openai.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role":"system","content":"5–10 learning objectives. Start with verb."},{"role":"user","content": desc_ai_content}])
+        r2 = openai.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role":"system","content":"Generate 5–10 clear, actionable learning objectives. Start each with a verb."},{"role":"user","content": full_content_for_ai_desc}])
         objs = [ln.strip(" -•*") for ln in r2.choices[0].message.content.splitlines() if ln.strip()]
-        students = [{"id": str(uuid.uuid4()), "name": n.strip(), "email": e.strip()} for ln in students_str.splitlines() if ',' in ln for n,e in [ln.split(',',1)]]
-        cfg = {"course_name": course, "instructor": {"name": instr_name, "email": instr_email}, "class_days": days_selected, "start_date": f"{sy}-{sm}-{sd}", "end_date": f"{ey}-{em}-{ed}", "allowed_devices": devices, "students": students, "sections_for_description": sections_desc, "full_text_content": full_txt, "char_offset_page_map": char_map, "course_description": desc, "learning_objectives": objs, "lessons": [], "lesson_plan_formatted": ""}
-        (CONFIG_DIR / f"{course.replace(' ','_').lower()}_config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-        return (gr.update(value=generate_syllabus(cfg), visible=True, interactive=False), gr.update(visible=False), None, gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=True), gr.update(value="", visible=False), gr.update(visible=False), gr.update(visible=True, value=course))
-    except openai.APIError as e: print(f"OpenAI Err: {e}\n{traceback.format_exc()}"); return err_ret(f"⚠️ OpenAI API Err: {e}.")
-    except Exception as e: print(f"Save Err: {e}\n{traceback.format_exc()}"); return err_ret(f"⚠️ Err: {e}")
-
-def generate_plan_callback(course_name):
-    def err_ret(msg): return (gr.update(value=msg, visible=True, interactive=False), None, None, gr.update(visible=True), None, None, gr.update(visible=False), gr.update(visible=False))
-    try:
-        if not course_name: return err_ret("⚠️ Error: Course Name required.")
+        parsed_students = [{"id": str(uuid.uuid4()), "name": n.strip(), "email": e.strip()} for ln in students_input_str.splitlines() if ',' in ln for n, e in [ln.split(',', 1)]]
+        cfg = {"course_name": course_name, "instructor": {"name": instr_name, "email": instr_email}, "class_days": class_days_selected, "start_date": f"{sy}-{sm}-{sd_day}", "end_date": f"{ey}-{em}-{ed_day}", "allowed_devices": devices, "students": parsed_students, "sections_for_description": sections_for_desc_obj, "full_text_content": full_pdf_text, "char_offset_page_map": char_offset_to_page_map, "course_description": desc, "learning_objectives": objs, "lessons": [], "lesson_plan_formatted": ""}
         path = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
-        if not path.exists(): return err_ret(f"⚠️ Error: Config for '{course_name}' not found.")
-        cfg = json.loads(path.read_text(encoding="utf-8"))
-        plan_str, lessons_list = generate_plan_by_week_structured_and_formatted(cfg)
-        cfg["lessons"], cfg["lesson_plan_formatted"] = lessons_list, plan_str
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-        return (gr.update(value=plan_str, visible=True, interactive=False), None, None, gr.update(visible=False), None, None, gr.update(visible=True), gr.update(visible=True))
-    except openai.APIError as e: print(f"OpenAI Err: {e}\n{traceback.format_exc()}"); return err_ret(f"⚠️ OpenAI API Err: {e}.")
-    except Exception as e: print(f"Plan Gen Err: {e}\n{traceback.format_exc()}"); return err_ret(f"⚠️ Err: {e}")
+        syllabus_text = generate_syllabus(cfg)
+        return (gr.update(value=syllabus_text, visible=True, interactive=False), gr.update(visible=False), None, gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=True), gr.update(value="", visible=False), gr.update(visible=False), gr.update(visible=True, value=course_name))
+    except openai.APIError as oai_err: print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}"); return error_return_tuple(f"⚠️ OpenAI API Error: {oai_err}.")
+    except Exception as e: print(f"Error in save_setup: {e}\n{traceback.format_exc()}"); return error_return_tuple(f"⚠️ Error: {e}")
 
-def email_document_callback(course_name, doc_type, content, students_str):
-    if not SMTP_USER or not SMTP_PASS: return gr.update(value="⚠️ Error: SMTP not configured.")
+def generate_plan_callback(course_name_from_input):
+    def error_return_for_plan(error_message_str):
+        return (gr.update(value=error_message_str, visible=True, interactive=False), None, None, gr.update(visible=True), None, None, gr.update(visible=False), gr.update(visible=False))
     try:
-        if not course_name or not content: return gr.update(value=f"⚠️ Error: Course & {doc_type} content required.")
+        if not course_name_from_input: return error_return_for_plan("⚠️ Error: Course Name required.")
+        path = CONFIG_DIR / f"{course_name_from_input.replace(' ','_').lower()}_config.json"
+        if not path.exists(): return error_return_for_plan(f"⚠️ Error: Config for '{course_name_from_input}' not found.")
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+        formatted_plan_str, structured_lessons_list = generate_plan_by_week_structured_and_formatted(cfg)
+        cfg["lessons"], cfg["lesson_plan_formatted"] = structured_lessons_list, formatted_plan_str
+        path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        return (gr.update(value=formatted_plan_str, visible=True, interactive=False), None, None, gr.update(visible=False), None, None, gr.update(visible=True), gr.update(visible=True)) # Hide generate button on success
+    except openai.APIError as oai_err: print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}"); return error_return_for_plan(f"⚠️ OpenAI API Error: {oai_err}.")
+    except Exception as e: print(f"Error in generate_plan_callback: {e}\n{traceback.format_exc()}"); return error_return_for_plan(f"⚠️ Error: {e}")
+
+def email_document_callback(course_name, doc_type, output_text_content, students_input_str):
+    if not SMTP_USER or not SMTP_PASS: return gr.update(value="⚠️ Error: SMTP settings not configured.")
+    try:
+        if not course_name or not output_text_content: return gr.update(value=f"⚠️ Error: Course Name & {doc_type} content required.")
         path = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
         if not path.exists(): return gr.update(value=f"⚠️ Error: Config for '{course_name}' not found.")
         cfg = json.loads(path.read_text(encoding="utf-8")); instr_name, instr_email = cfg.get("instructor", {}).get("name", "Instructor"), cfg.get("instructor", {}).get("email")
-        buf, fn = download_docx(content, f"{course_name.replace(' ','_')}_{doc_type.lower()}.docx"); data = buf.read()
-        recipients = ([{"name":instr_name, "email":instr_email}] if instr_email else []) + [{"name":n.strip(), "email":e.strip()} for ln in students_str.splitlines() if ',' in ln for n,e in [ln.split(',',1)]]
+        buf, fn = download_docx(output_text_content, f"{course_name.replace(' ','_')}_{doc_type.lower()}.docx"); attachment_data = buf.read()
+        recipients = ([{"name":instr_name, "email":instr_email}] if instr_email else []) + [{"name":n.strip(), "email":e.strip()} for ln in students_input_str.splitlines() if ',' in ln for n,e in [ln.split(',',1)]]
         if not recipients: return gr.update(value="⚠️ Error: No recipients.")
         s_count, errs = 0, []
         for rec in recipients:
             msg = EmailMessage(); msg["Subject"], msg["From"], msg["To"] = f"{doc_type.capitalize()}: {course_name}", SMTP_USER, rec["email"]
-            msg.set_content(f"Hi {rec['name']},\n\nAttached is {doc_type.lower()} for {course_name}.\n\nBest,\nAI Tutor"); msg.add_attachment(data, maintype="application", subtype="vnd.openxmlformats-officedocument.wordprocessingml.document", filename=fn)
+            msg.set_content(f"Hi {rec['name']},\n\nAttached is {doc_type.lower()} for {course_name}.\n\nBest,\nAI Tutor System"); msg.add_attachment(attachment_data, maintype="application", subtype="vnd.openxmlformats-officedocument.wordprocessingml.document", filename=fn)
             try: 
                 with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s: s.starttls(); s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
                 s_count+=1
             except smtplib.SMTPRecipientsRefused as e_recp:
                 err_str = str(e_recp).lower(); keywords = ["not a valid rfc", "address rejected", "user unknown", "no such user", "bad recipient", "invalid mailbox"]
                 is_invalid = any(k in err_str for k in keywords)
-                err_msg = f"Err for {rec['email']}: Ensure valid email." if is_invalid else f"SMTP Err (Recipient) for {rec['email']}: {e_recp}"
+                err_msg = f"Error for {rec['email']}: Please ensure this is a valid email address." if is_invalid else f"SMTP Err (Recipient) for {rec['email']}: {e_recp}"
                 print(f"SMTP Recipient Refused for {rec['email']}: {e_recp}"); errs.append(err_msg)
             except smtplib.SMTPAuthenticationError as e_auth: errs.append(f"SMTP Auth Err (for {rec['email']}): Check sender credentials.")
             except Exception as e_smtp: errs.append(f"SMTP Err for {rec['email']}: {e_smtp}")
@@ -353,11 +431,16 @@ def build_ui():
                 btn_save = gr.Button("1. Save Setup & Generate Syllabus", variant="primary"); gr.Markdown("---")
                 output_box = gr.Textbox(label="Output", lines=20, interactive=False, visible=False, show_copy_button=True) 
                 with gr.Row(visible=False) as syllabus_actions_row: btn_edit_syl, btn_email_syl = gr.Button(value="📝 Edit Syllabus Text"), gr.Button(value="📧 Email Syllabus", variant="secondary")
+            
             with gr.TabItem("Lesson Plan Management"):
                 lesson_plan_setup_message = gr.Markdown(value="### Course Setup Required\nCourse Setup (on Tab 1) must be completed before generating a Lesson Plan.", visible=True)
                 course_load_for_plan = gr.Textbox(label="Course Name for Lesson Plan", placeholder="e.g., Introduction to Python", visible=False)
                 output_plan_box = gr.Textbox(label="Lesson Plan Output", lines=20, interactive=False, visible=False, show_copy_button=True)
-                with gr.Row(visible=False) as plan_buttons_row: btn_generate_plan, btn_edit_plan, btn_email_plan = gr.Button("2. Generate/Re-generate Lesson Plan", variant="primary"), gr.Button(value="📝 Edit Plan Text"), gr.Button(value="📧 Email Lesson Plan", variant="secondary")
+                with gr.Row(visible=False) as plan_buttons_row: 
+                    btn_generate_plan = gr.Button("2. Generate/Re-generate Lesson Plan", variant="primary")
+                    btn_edit_plan = gr.Button(value="📝 Edit Plan Text")
+                    btn_email_plan= gr.Button(value="📧 Email Lesson Plan", variant="secondary")
+            
             with gr.TabItem("Contact Support"):
                 gr.Markdown("### Send a Message to Support")
                 with gr.Row(): contact_name, contact_email_addr = gr.Textbox(label="Your Name"), gr.Textbox(label="Your Email Address")
@@ -378,41 +461,78 @@ def build_ui():
             if not email_addr.strip(): errors.append("Email Address is required.")
             elif "@" not in email_addr: errors.append("A valid Email Address (containing '@') is required.")
             if not message_content_from_box.strip(): errors.append("Message is required.")
+
             if errors:
-                error_text = "Please correct:\n" + "\n".join(f"- {e}" for e in errors)
-                return (gr.update(value=""), None, None, gr.update(value=error_text), None)
-            yield (gr.update(value="<p>Sending...</p>"), None, None, gr.update(value=""), None)
-            subject, to_email = f"AI Tutor Panel Contact: {name} ({email_addr})", "easyaitutor@gmail.com"
+                error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
+                return (gr.update(value=""), None, None, gr.update(value=error_text), None) # Error in message_box
+
+            yield (gr.update(value="<p>Sending...</p>"), None, None, gr.update(value=""), None) # Status, keep name, keep email, clear message, keep attachment
+            
+            subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
+            to_support_email = "easyaitutor@gmail.com"
             html_body = f"<html><body><h3>Contact Request</h3><p><b>Name:</b> {name}</p><p><b>Email:</b> {email_addr}</p><hr><p><b>Message:</b></p><p>{message_content_from_box.replace(chr(10), '<br>')}</p></body></html>"
-            success = send_email_notification(to_email, subject, html_body, email_addr, attachment_file)
-            if success: return (gr.update(value="<p style='color:green;'>Message sent!</p>"), gr.update(value=""), gr.update(value=""), gr.update(value=""), gr.update(value=None))
-            else: return (gr.update(value="<p style='color:red;'>Error sending. Try again.</p>"), None, None, gr.update(value=message_content_from_box), attachment_file)
-        btn_send_contact_email.click(handle_contact_submission, inputs=[contact_name, contact_email_addr, contact_message, contact_attachment], outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment])
+            
+            success = send_email_notification(to_support_email, subject, html_body, email_addr, attachment_file)
+            
+            if success: 
+                return (gr.update(value="<p style='color:green;'>Message sent successfully!</p>"), gr.update(value=""), gr.update(value=""), gr.update(value=""), gr.update(value=None)) # Clear all on success
+            else: 
+                # On send failure, show error in status, restore original message to message box
+                return (gr.update(value="<p style='color:red;'>Error: Could not send message. Please try again later.</p>"), None, None, gr.update(value=message_content_from_box), attachment_file)
+
+        btn_send_contact_email.click(
+            handle_contact_submission,
+            inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
+            outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment] 
+        )
     return demo
 
 # --- FastAPI Mounting & Main Execution ---
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
 @app.on_event("startup")
 async def startup_event():
+    # Ensure scheduler is accessible (it's global)
     scheduler.add_job(send_daily_class_reminders, trigger=CronTrigger(hour=5, minute=50, timezone='UTC'), id="daily_reminders", name="Daily Class Reminders", replace_existing=True)
     scheduler.add_job(check_student_progress_and_notify_professor, trigger=CronTrigger(hour=18, minute=0, timezone='UTC'), id="progress_check", name="Student Progress Check", replace_existing=True)
-    if not scheduler.running: scheduler.start(); print("APScheduler started.")
-    else: print("APScheduler already running.")
-    for job in scheduler.get_jobs(): print(f"  Job: {job.id}, Name: {job.name}, Trigger: {job.trigger}")
+    if not scheduler.running: 
+        scheduler.start()
+        print("APScheduler started.")
+    else: 
+        print("APScheduler already running.")
+    print("Scheduled jobs:")
+    for job in scheduler.get_jobs(): 
+        print(f"  Job: {job.id}, Name: {job.name}, Trigger: {job.trigger}")
+
 @app.on_event("shutdown")
 async def shutdown_event():
-    if scheduler.running: scheduler.shutdown(); print("APScheduler shutdown.")
+    if scheduler.running: 
+        scheduler.shutdown()
+        print("APScheduler shutdown.")
+
 gradio_app_instance = build_ui()
-app = gr.mount_gradio_app(app, gradio_app_instance, path="/") # This line was causing the NoneType error if build_ui() returned None
+# Ensure build_ui() returns a valid Gradio Blocks instance
+if gradio_app_instance is None:
+    print("ERROR: build_ui() returned None. Gradio app cannot be mounted.")
+    # Optionally raise an exception or exit
+    # raise ValueError("build_ui() must return a Gradio Blocks instance.")
+else:
+    app = gr.mount_gradio_app(app, gradio_app_instance, path="/")
+
 @app.get("/healthz")
-def healthz(): return {"status":"ok", "scheduler_running": scheduler.running}
+def healthz(): return {"status":"ok", "scheduler_running": scheduler.running if 'scheduler' in globals() and scheduler else False}
 
 if __name__ == "__main__":
-    print("Starting Gradio UI locally. For production, use Uvicorn.")
-    gradio_app_instance.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT",7860)))
-    try:
-        while True: time.sleep(2)
-    except (KeyboardInterrupt, SystemExit):
-        print("Shutting down scheduler...")
-        if scheduler.running: scheduler.shutdown()
+    print("Starting Gradio UI locally. For production, use Uvicorn: uvicorn your_script_name:app --host 0.0.0.0 --port $PORT")
+    # gradio_app_instance is already defined globally if build_ui() was called before mounting
+    if 'gradio_app_instance' in globals() and gradio_app_instance is not None:
+        gradio_app_instance.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT",7860)))
+        try:
+            while True: time.sleep(2) 
+        except (KeyboardInterrupt, SystemExit):
+            print("Shutting down scheduler (if running)...")
+            if 'scheduler' in globals() and scheduler.running: 
+                scheduler.shutdown()
+    else:
+        print("ERROR: Gradio app instance not created. Cannot launch.")
