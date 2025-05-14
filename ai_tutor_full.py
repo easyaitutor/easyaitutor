@@ -231,19 +231,74 @@ def generate_plan_by_week_structured_and_formatted(cfg):
                 summaries.append(resp.choices[0].message.content.strip().replace('"', '').capitalize())
             except Exception as e: print(f"Error summarizing seg {i+1}: {e}"); summaries.append(f"Topic seg {i+1} (Summary Error)")
     
-    lessons_by_week, structured_lessons = {}, []
-    for idx, dt in enumerate(class_dates):
-        wk_key = f"{dt.isocalendar()[0]}-W{dt.isocalendar()[1]:02d}"; summary = summaries[idx]; est_pg = None
+    lessons_by_course_week = {} # Use a different dictionary name
+    structured_lessons = []
+
+    if not class_dates: # Should have been caught earlier, but good to be safe
+        return "No class dates to process.", []
+
+    # Determine the ISO week and year of the very first class date
+    first_class_date = class_dates[0]
+    # To calculate course week, we find the Monday of the week for each class date
+    # and count unique Mondays.
+    
+    course_week_counter = 0
+    current_week_monday_for_grouping = None
+
+    for idx, dt_obj in enumerate(class_dates): # dt_obj is the specific date of a class
+        # Find the Monday of the current class date's week
+        monday_of_this_week = dt_obj - timedelta(days=dt_obj.weekday())
+
+        if current_week_monday_for_grouping is None or monday_of_this_week > current_week_monday_for_grouping:
+            course_week_counter += 1
+            current_week_monday_for_grouping = monday_of_this_week
+        
+        # Use the course_week_counter for grouping.
+        # We also include the year of that Monday to handle courses spanning year-end.
+        year_of_this_course_week = monday_of_this_week.year 
+        course_week_key = f"{year_of_this_course_week}-CW{course_week_counter:02d}" # CW for Course Week
+
+        # ... (logic to get summary_for_lesson, page_num, original_title_for_lesson, est_pg) ...
+        # This part remains the same as your last full version
+        summary_for_lesson = summaries[idx]
+        est_pg = None
         if char_map:
             seg_start = seg_starts[idx]
             for offset, pg in reversed(char_map):
                 if seg_start >= offset: est_pg = pg; break
             if est_pg is None and char_map: est_pg = char_map[0][1]
-        ld = {"lesson_number": idx + 1, "date": dt.strftime('%Y-%m-%d'), "topic_summary": summary, "original_section_title": f"Text Seg {idx+1}", "page_reference": est_pg}
-        structured_lessons.append(ld); lessons_by_week.setdefault(wk_key, []).append(ld)
+        
+        lesson_data = {
+            "lesson_number": idx + 1, 
+            "date": dt_obj.strftime('%Y-%m-%d'),
+            "topic_summary": summary_for_lesson, 
+            "original_section_title": f"Text Segment {idx+1}", 
+            "page_reference": est_pg 
+        }
+        # ... end of lesson_data creation ...
+
+        structured_lessons.append(lesson_data)
+        lessons_by_course_week.setdefault(course_week_key, []).append(lesson_data)
+
     formatted_lines = []
-    for wk_key in sorted(lessons_by_week.keys()):
-        yr, wk = wk_key.split("-W"); formatted_lines.append(f"**Week {wk} (Year {yr})**\n")
+    # Sort by the new course_week_key
+    for course_week_key in sorted(lessons_by_course_week.keys()): 
+        # Extract the course week number for display
+        # The year is mostly for internal key uniqueness if course spans years
+        year_disp, course_week_num_disp_str = course_week_key.split("-CW") 
+        course_week_num_disp = int(course_week_num_disp_str) # Convert to int for display as "Week 1" not "Week 01"
+
+        # Get the start date of this course week for display context (optional but nice)
+        first_date_in_this_week_group = lessons_by_course_week[course_week_key][0]['date']
+        first_date_obj = datetime.strptime(first_date_in_this_week_group, '%Y-%m-%d')
+        # Display the year of the actual classes in that week
+        formatted_lines.append(f"**Course Week {course_week_num_disp} (Year {first_date_obj.year})**\n") 
+        
+        for lesson in lessons_by_course_week[course_week_key]:
+            ds = datetime.strptime(lesson['date'], '%Y-%m-%d').strftime('%B %d, %Y')
+            pstr = f" (Approx. Ref. p. {lesson['page_reference']})" if lesson['page_reference'] else ''
+            formatted_lines.append(f"**Lesson {lesson['lesson_number']} ({ds})**{pstr}: {lesson['topic_summary']}")
+        formatted_lines.append('')
         for lsn in lessons_by_week[wk_key]:
             ds = datetime.strptime(lsn['date'], '%Y-%m-%d').strftime('%B %d, %Y')
             pstr = f" (Approx. Ref. p. {lsn['page_reference']})" if lsn['page_reference'] else ''
