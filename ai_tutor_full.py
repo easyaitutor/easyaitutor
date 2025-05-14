@@ -625,16 +625,65 @@ def build_instructor_ui():
         errors.append("Message is required.")
 
     if errors:
-        error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
+        error_text = "Please correct the following errors:\n" + \
+                     "\n".join(f"- {e}" for e in errors)
         return (
-            gr.update(value=error_text),  # ← show errors here, in contact_status_output
-            None,                          # leave contact_name untouched
-            None,                          # leave contact_email_addr untouched
-            None,                          # leave contact_message untouched
-            None                           # leave contact_attachment untouched
+            gr.update(value=error_text),  # status output
+            None,                         # leave name box alone
+            None,                         # leave email box alone
+            None,                         # leave message box alone
+            None                          # leave attachment alone
         )
 
-            yield (gr.update(value="<p><i>Sending message... Please wait.</i></p>"), None, None, gr.update(value=""), None)
+    # If no errors, show “Sending…” feedback
+    yield (
+        gr.update(value="<p><i>Sending message... Please wait.</i></p>"),
+        None, None,
+        gr.update(value=""),
+        None
+    )
+    time.sleep(0.1)
+
+    try:
+        subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
+        to_support_email = "easyaitutor@gmail.com"
+        html_body = (
+            f"<html><body><h3>Contact Request</h3>"
+            f"<p><b>Name:</b> {name}</p>"
+            f"<p><b>Email:</b> {email_addr}</p><hr>"
+            f"<p><b>Message:</b></p>"
+            f"<p>{message_content_from_box.replace(chr(10), '<br>')}</p>"
+            f"</body></html>"
+        )
+        success = send_email_notification(
+            to_support_email, subject, html_body, email_addr, attachment_file
+        )
+        if success:
+            return (
+                gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
+                gr.update(value=""),  # clear name
+                gr.update(value=""),  # clear email
+                gr.update(value=""),  # clear message
+                None                   # clear attachment
+            )
+        else:
+            return (
+                gr.update(value="<p style='color:red;'>Error: Could not send message. Check logs.</p>"),
+                None, None,
+                gr.update(value=message_content_from_box),
+                attachment_file
+            )
+
+    except Exception as e_handler:
+        print(f"Unexpected error in handle_contact_submission: {e_handler}\n{traceback.format_exc()}")
+        return (
+            gr.update(value=f"<p style='color:red;'>Critical Error: {e_handler}.</p>"),
+            None, None,
+            gr.update(value=message_content_from_box),
+            attachment_file
+        )
+
+             yield (gr.update(value="<p><i>Sending message... Please wait.</i></p>"), None, None, gr.update(value=""), None)
             time.sleep(0.1) 
             try:
                 subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
