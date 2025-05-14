@@ -613,7 +613,7 @@ def build_instructor_ui():
         btn_email_plan.click(email_plan_callback, inputs=[course_load_for_plan, students_input_str, output_plan_box], outputs=[output_plan_box])
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
         
-        def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
+    def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
     errors = []
     if not name.strip():
         errors.append("Name is required.")
@@ -624,18 +624,18 @@ def build_instructor_ui():
     if not message_content_from_box.strip():
         errors.append("Message is required.")
 
+    # If validation fails, show errors in the status box and leave inputs intact
     if errors:
-        error_text = "Please correct the following errors:\n" + \
-                     "\n".join(f"- {e}" for e in errors)
+        error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
         return (
-            gr.update(value=error_text),  # status output
-            None,                         # leave name box alone
-            None,                         # leave email box alone
-            None,                         # leave message box alone
-            None                          # leave attachment alone
+            gr.update(value=error_text),  # contact_status_output
+            None,                          # contact_name unchanged
+            None,                          # contact_email_addr unchanged
+            None,                          # contact_message unchanged
+            None                           # contact_attachment unchanged
         )
 
-    # If no errors, show “Sending…” feedback
+    # Otherwise, show a “sending…” placeholder
     yield (
         gr.update(value="<p><i>Sending message... Please wait.</i></p>"),
         None, None,
@@ -658,6 +658,7 @@ def build_instructor_ui():
         success = send_email_notification(
             to_support_email, subject, html_body, email_addr, attachment_file
         )
+
         if success:
             return (
                 gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
@@ -683,7 +684,7 @@ def build_instructor_ui():
             attachment_file
         )
 
-             yield (gr.update(value="<p><i>Sending message... Please wait.</i></p>"), None, None, gr.update(value=""), None)
+            yield (gr.update(value="<p><i>Sending message... Please wait.</i></p>"), None, None, gr.update(value=""), None)
             time.sleep(0.1) 
             try:
                 subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
