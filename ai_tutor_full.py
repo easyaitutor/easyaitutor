@@ -827,7 +827,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 # Mount Instructor Panel UI
 instructor_ui_instance = build_instructor_ui()
 if instructor_ui_instance:
-    app = gr.mount_gradio_app(app, instructor_ui_instance, path="/instructor") # Changed path
+    app = gr.mount_gradio_app(app, instructor_ui_instance, path="/") # Changed path
 else:
     print("ERROR: build_instructor_ui() returned None. Instructor panel not mounted.")
 
