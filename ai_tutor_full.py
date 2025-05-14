@@ -278,23 +278,23 @@ def generate_plan_by_week_structured_and_formatted(cfg):
         # ... end of lesson_data creation ...
 
         structured_lessons.append(lesson_data)
-        lessons_by_course_week.setdefault(course_week_key, []).append(lesson_data)
+        lessons_by_course_week.setdefault(course_week_key, []).append(lesson_data) # CORRECTED
 
     formatted_lines = []
     # Sort by the new course_week_key
-    for course_week_key in sorted(lessons_by_course_week.keys()): 
+    for course_week_key in sorted(lessons_by_course_week.keys()): # CORRECTED
         # Extract the course week number for display
         # The year is mostly for internal key uniqueness if course spans years
         year_disp, course_week_num_disp_str = course_week_key.split("-CW") 
-        course_week_num_disp = int(course_week_num_disp_str) # Convert to int for display as "Week 1" not "Week 01"
+        course_week_num_disp = int(course_week_num_disp_str) 
 
         # Get the start date of this course week for display context (optional but nice)
-        first_date_in_this_week_group = lessons_by_course_week[course_week_key][0]['date']
+        first_date_in_this_week_group = lessons_by_course_week[course_week_key][0]['date'] # CORRECTED
         first_date_obj = datetime.strptime(first_date_in_this_week_group, '%Y-%m-%d')
         # Display the year of the actual classes in that week
         formatted_lines.append(f"**Course Week {course_week_num_disp} (Year {first_date_obj.year})**\n") 
         
-        for lesson in lessons_by_course_week[course_week_key]:
+        for lesson in lessons_by_course_week[course_week_key]: # CORRECTED
             ds = datetime.strptime(lesson['date'], '%Y-%m-%d').strftime('%B %d, %Y')
             pstr = f" (Approx. Ref. p. {lesson['page_reference']})" if lesson['page_reference'] else ''
             formatted_lines.append(f"**Lesson {lesson['lesson_number']} ({ds})**{pstr}: {lesson['topic_summary']}")
