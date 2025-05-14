@@ -299,11 +299,6 @@ def generate_plan_by_week_structured_and_formatted(cfg):
             pstr = f" (Approx. Ref. p. {lesson['page_reference']})" if lesson['page_reference'] else ''
             formatted_lines.append(f"**Lesson {lesson['lesson_number']} ({ds})**{pstr}: {lesson['topic_summary']}")
         formatted_lines.append('')
-        for lsn in lessons_by_week[wk_key]:
-            ds = datetime.strptime(lsn['date'], '%Y-%m-%d').strftime('%B %d, %Y')
-            pstr = f" (Approx. Ref. p. {lsn['page_reference']})" if lsn['page_reference'] else ''
-            formatted_lines.append(f"**Lesson {lsn['lesson_number']} ({ds})**{pstr}: {lsn['topic_summary']}")
-        formatted_lines.append('')
     return "\n".join(formatted_lines), structured_lessons
 
 # --- APScheduler Setup & Jobs ---
