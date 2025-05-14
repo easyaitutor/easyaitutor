@@ -614,15 +614,25 @@ def build_instructor_ui():
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
         
         def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
-            errors = []
-            if not name.strip(): errors.append("Name is required.")
-            if not email_addr.strip(): errors.append("Email Address is required.")
-            elif "@" not in email_addr: errors.append("A valid Email Address (containing '@') is required.")
-            if not message_content_from_box.strip(): errors.append("Message is required.")
+    errors = []
+    if not name.strip():
+        errors.append("Name is required.")
+    if not email_addr.strip():
+        errors.append("Email Address is required.")
+    elif "@" not in email_addr:
+        errors.append("A valid Email Address (containing '@') is required.")
+    if not message_content_from_box.strip():
+        errors.append("Message is required.")
 
-            if errors:
-                error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
-                return (gr.update(value=""), None, None, gr.update(value=error_text), None)
+    if errors:
+        error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
+        return (
+            gr.update(value=error_text),  # ← show errors here, in contact_status_output
+            None,                          # leave contact_name untouched
+            None,                          # leave contact_email_addr untouched
+            None,                          # leave contact_message untouched
+            None                           # leave contact_attachment untouched
+        )
 
             yield (gr.update(value="<p><i>Sending message... Please wait.</i></p>"), None, None, gr.update(value=""), None)
             time.sleep(0.1) 
