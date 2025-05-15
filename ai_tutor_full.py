@@ -585,7 +585,7 @@ def build_instructor_ui():
                 output_box = gr.Textbox(label="Output", lines=20, interactive=False, visible=False, show_copy_button=True) 
                 with gr.Row(visible=False) as syllabus_actions_row: btn_edit_syl, btn_email_syl = gr.Button(value="📝 Edit Syllabus Text"), gr.Button(value="📧 Email Syllabus", variant="secondary")
             
-            with gr.TabItem("Lesson Plan Management"):
+                with gr.TabItem("Lesson Plan Management"):
                 lesson_plan_setup_message = gr.Markdown(value="### Course Setup Required\nCourse Setup (on Tab 1) must be completed before generating a Lesson Plan.", visible=True)
                 course_load_for_plan = gr.Textbox(label="Course Name for Lesson Plan", placeholder="e.g., Introduction to Python", visible=False)
                 output_plan_box = gr.Textbox(label="Lesson Plan Output", lines=20, interactive=False, visible=False, show_copy_button=True)
@@ -594,7 +594,7 @@ def build_instructor_ui():
                     btn_edit_plan = gr.Button(value="📝 Edit Plan Text")
                     btn_email_plan= gr.Button(value="📧 Email Lesson Plan", variant="secondary")
             
-            with gr.TabItem("Contact Support"):
+                with gr.TabItem("Contact Support"):
                 gr.Markdown("### Send a Message to Support")
                 with gr.Row(): 
                     contact_name = gr.Textbox(label="Your Name")
@@ -613,7 +613,7 @@ def build_instructor_ui():
         btn_email_plan.click(email_plan_callback, inputs=[course_load_for_plan, students_input_str, output_plan_box], outputs=[output_plan_box])
         course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
         
-    def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
+        def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
         errors = []
         if not name.strip():
             errors.append("Name is required.")
@@ -684,11 +684,11 @@ def build_instructor_ui():
                 attachment_file
             )
 
-    btn_send_contact_email.click(
+        btn_send_contact_email.click(
         handle_contact_submission,
         inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
         outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment]
-    )
+            )
 
     return instructor_demo  # Return the Blocks instance
 
