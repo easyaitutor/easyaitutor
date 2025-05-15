@@ -633,18 +633,18 @@ def build_instructor_ui():
 
             # --- Tab 3: Contact Support ---
             with gr.TabItem("Contact Support"):
-                gr.Markdown("### Send a Message to Support")
-                with gr.Row():
-                    contact_name       = gr.Textbox(label="Your Name")
-                    contact_email_addr = gr.Textbox(label="Your Email Address")
-                contact_message    = gr.Textbox(
-                    label="Message",
-                    lines=5,
-                    placeholder="Type your message here..."
-                )
-                contact_attachment = gr.File(label="Attach File (Optional)", file_count="single")
-                btn_send_contact_email = gr.Button("Send Message", variant="primary")
-                contact_status_output  = gr.Markdown(value="")
+            gr.Markdown("### Send a Message to Support")
+            with gr.Row():
+                contact_name       = gr.Textbox(label="Your Name")
+                contact_email_addr = gr.Textbox(label="Your Email Address")
+            contact_message    = gr.Textbox(
+                label="Message",
+                lines=5,
+                placeholder="Type your message here..."
+            )
+            contact_attachment = gr.File(label="Attach File (Optional)", file_count="single")
+            btn_send_contact_email = gr.Button("Send Message", variant="primary")
+            contact_status_output  = gr.Markdown(value="")
 
         # dummy buttons for proper Gradio state juggling
         dummy_btn_1 = gr.Button(visible=False)
