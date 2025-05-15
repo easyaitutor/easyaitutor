@@ -683,21 +683,10 @@ def build_instructor_ui():
             gr.update(value=message_content_from_box),
             attachment_file
         )
-
-            yield (gr.update(value="<p><i>Sending message... Please wait.</i></p>"), None, None, gr.update(value=""), None)
-            time.sleep(0.1) 
-            try:
-                subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
-                to_support_email = "easyaitutor@gmail.com" 
-                html_body = f"<html><body><h3>Contact Request</h3><p><b>Name:</b> {name}</p><p><b>Email:</b> {email_addr}</p><hr><p><b>Message:</b></p><p>{message_content_from_box.replace(chr(10), '<br>')}</p></body></html>"
-                success = send_email_notification(to_support_email, subject, html_body, email_addr, attachment_file)
-                if success: return (gr.update(value="<p style='color:green;'>Message sent successfully!</p>"), gr.update(value=""), gr.update(value=""), gr.update(value=""), gr.update(value=None))
-                else: return (gr.update(value="<p style='color:red;'>Error: Could not send message. Check logs.</p>"), None, None, gr.update(value=message_content_from_box), attachment_file)
-            except Exception as e_handler:
-                print(f"Unexpected error in handle_contact_submission: {e_handler}\n{traceback.format_exc()}")
-                return (gr.update(value=f"<p style='color:red;'>Critical Error: {e_handler}.</p>"), None, None, gr.update(value=message_content_from_box), attachment_file)
-        btn_send_contact_email.click(handle_contact_submission, inputs=[contact_name, contact_email_addr, contact_message, contact_attachment], outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment])
-    return instructor_demo # Return the Blocks instance
+                
+            btn_send_contact_email.click(handle_contact_submission, inputs=[contact_name, contact_email_addr, contact_message, contact_attachment], outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment]
+        )
+            return instructor_demo # Return the Blocks instance
 
 # --- Student Tutor UI and Logic ---
 # This will be a new section, adapted from your student tutor script
