@@ -565,132 +565,220 @@ def email_plan_callback(c, s_str, out_content): return email_document_callback(c
 
 # --- Build Instructor UI ---
 def build_instructor_ui():
-    # ... (The entire build_ui function as defined in the previous full code, 
-    #      now renamed to build_instructor_ui, including the handle_contact_submission 
-    #      and its .click handler correctly indented within it) ...
-    with gr.Blocks(theme=gr.themes.Soft()) as instructor_demo: # Changed demo to instructor_demo
+    import time  # ensure time is in scope for the send placeholder
+    with gr.Blocks(theme=gr.themes.Soft()) as instructor_demo:
         gr.Markdown("## AI Tutor Instructor Panel")
         with gr.Tabs():
+            # --- Tab 1: Course Setup & Syllabus ---
             with gr.TabItem("Course Setup & Syllabus"):
-                with gr.Row(): course, instr, email = gr.Textbox(label="Course Name*"), gr.Textbox(label="Instructor Name*"), gr.Textbox(label="Instructor Email*", type="email")
+                with gr.Row():
+                    course = gr.Textbox(label="Course Name*")
+                    instr = gr.Textbox(label="Instructor Name*")
+                    email = gr.Textbox(label="Instructor Email*", type="email")
                 pdf_file = gr.File(label="Upload Course Material PDF*", file_types=[".pdf"])
                 with gr.Row():
                     with gr.Column(scale=2):
-                        gr.Markdown("#### Course Schedule"); years, months, days_list = [str(y) for y in range(datetime.now().year, datetime.now().year + 5)], [f"{m:02d}" for m in range(1,13)], [f"{d:02d}" for d in range(1,32)]
-                        with gr.Row(): sy, sm, sd_day = gr.Dropdown(years, label="Start Year*"), gr.Dropdown(months, label="Start Month*"), gr.Dropdown(days_list, label="Start Day*")
-                        with gr.Row(): ey, em, ed_day = gr.Dropdown(years, label="End Year*"), gr.Dropdown(months, label="End Month*"), gr.Dropdown(days_list, label="End Day*")
+                        gr.Markdown("#### Course Schedule")
+                        years      = [str(y) for y in range(datetime.now().year, datetime.now().year + 5)]
+                        months     = [f"{m:02d}" for m in range(1, 13)]
+                        days_list  = [f"{d:02d}" for d in range(1, 32)]
+                        with gr.Row():
+                            sy       = gr.Dropdown(years, label="Start Year*")
+                            sm       = gr.Dropdown(months, label="Start Month*")
+                            sd_day   = gr.Dropdown(days_list, label="Start Day*")
+                        with gr.Row():
+                            ey       = gr.Dropdown(years, label="End Year*")
+                            em       = gr.Dropdown(months, label="End Month*")
+                            ed_day   = gr.Dropdown(days_list, label="End Day*")
                         class_days_selected = gr.CheckboxGroup(list(days_map.keys()), label="Class Days*")
-                    with gr.Column(scale=1): gr.Markdown("#### Student & Access"); devices = gr.CheckboxGroup(["Phone","PC", "Tablet"], label="Allowed Devices", value=["PC"]); students_input_str = gr.Textbox(label="Students (Name,Email per line)", lines=5, placeholder="S. One,s1@ex.com\nS. Two,s2@ex.com")
-                btn_save = gr.Button("1. Save Setup & Generate Syllabus", variant="primary"); gr.Markdown("---")
-                output_box = gr.Textbox(label="Output", lines=20, interactive=False, visible=False, show_copy_button=True) 
-                with gr.Row(visible=False) as syllabus_actions_row: btn_edit_syl, btn_email_syl = gr.Button(value="📝 Edit Syllabus Text"), gr.Button(value="📧 Email Syllabus", variant="secondary")
-            
-                with gr.TabItem("Lesson Plan Management"):
-                lesson_plan_setup_message = gr.Markdown(value="### Course Setup Required\nCourse Setup (on Tab 1) must be completed before generating a Lesson Plan.", visible=True)
-                course_load_for_plan = gr.Textbox(label="Course Name for Lesson Plan", placeholder="e.g., Introduction to Python", visible=False)
-                output_plan_box = gr.Textbox(label="Lesson Plan Output", lines=20, interactive=False, visible=False, show_copy_button=True)
-                with gr.Row(visible=False) as plan_buttons_row: 
+                    with gr.Column(scale=1):
+                        gr.Markdown("#### Student & Access")
+                        devices            = gr.CheckboxGroup(["Phone", "PC", "Tablet"], label="Allowed Devices", value=["PC"])
+                        students_input_str = gr.Textbox(
+                            label="Students (Name,Email per line)",
+                            lines=5,
+                            placeholder="S. One,s1@ex.com\nS. Two,s2@ex.com"
+                        )
+                btn_save  = gr.Button("1. Save Setup & Generate Syllabus", variant="primary")
+                gr.Markdown("---")
+                output_box = gr.Textbox(
+                    label="Output", lines=20, interactive=False, visible=False, show_copy_button=True
+                )
+                with gr.Row(visible=False) as syllabus_actions_row:
+                    btn_edit_syl  = gr.Button(value="📝 Edit Syllabus Text")
+                    btn_email_syl = gr.Button(value="📧 Email Syllabus", variant="secondary")
+
+            # --- Tab 2: Lesson Plan Management ---
+            with gr.TabItem("Lesson Plan Management"):
+                lesson_plan_setup_message = gr.Markdown(
+                    value=(
+                        "### Course Setup Required\n"
+                        "Course Setup (on Tab 1) must be completed before generating a Lesson Plan."
+                    ),
+                    visible=True
+                )
+                course_load_for_plan = gr.Textbox(
+                    label="Course Name for Lesson Plan",
+                    placeholder="e.g., Introduction to Python",
+                    visible=False
+                )
+                output_plan_box = gr.Textbox(
+                    label="Lesson Plan Output",
+                    lines=20, interactive=False, visible=False, show_copy_button=True
+                )
+                with gr.Row(visible=False) as plan_buttons_row:
                     btn_generate_plan = gr.Button("2. Generate/Re-generate Lesson Plan", variant="primary")
-                    btn_edit_plan = gr.Button(value="📝 Edit Plan Text")
-                    btn_email_plan= gr.Button(value="📧 Email Lesson Plan", variant="secondary")
-            
-                with gr.TabItem("Contact Support"):
+                    btn_edit_plan     = gr.Button(value="📝 Edit Plan Text")
+                    btn_email_plan    = gr.Button(value="📧 Email Lesson Plan", variant="secondary")
+
+            # --- Tab 3: Contact Support ---
+            with gr.TabItem("Contact Support"):
                 gr.Markdown("### Send a Message to Support")
-                with gr.Row(): 
-                    contact_name = gr.Textbox(label="Your Name")
+                with gr.Row():
+                    contact_name       = gr.Textbox(label="Your Name")
                     contact_email_addr = gr.Textbox(label="Your Email Address")
-                contact_message = gr.Textbox(label="Message", lines=5, placeholder="Type your message here...")
+                contact_message    = gr.Textbox(
+                    label="Message",
+                    lines=5,
+                    placeholder="Type your message here..."
+                )
                 contact_attachment = gr.File(label="Attach File (Optional)", file_count="single")
                 btn_send_contact_email = gr.Button("Send Message", variant="primary")
-                contact_status_output = gr.Markdown(value="")
-        
-        dummy_btn_1, dummy_btn_2, dummy_btn_3, dummy_btn_4 = gr.Button(visible=False), gr.Button(visible=False), gr.Button(visible=False), gr.Button(visible=False)
-        btn_save.click(save_setup, inputs=[course,instr,email,devices,pdf_file,sy,sm,sd_day,ey,em,ed_day,class_days_selected,students_input_str], outputs=[output_box, btn_save, dummy_btn_1, btn_generate_plan, btn_edit_syl, btn_email_syl, btn_edit_plan, btn_email_plan, syllabus_actions_row, plan_buttons_row, output_plan_box, lesson_plan_setup_message, course_load_for_plan])
-        btn_edit_syl.click(enable_edit_syllabus_and_reload, inputs=[course, output_box], outputs=[output_box])
-        btn_email_syl.click(email_syllabus_callback, inputs=[course, students_input_str, output_box], outputs=[output_box])
-        btn_generate_plan.click(generate_plan_callback, inputs=[course_load_for_plan], outputs=[output_plan_box, dummy_btn_2, dummy_btn_1, btn_generate_plan, dummy_btn_3, dummy_btn_4, btn_edit_plan, btn_email_plan]).then(lambda: (gr.update(visible=True), gr.update(visible=True)), outputs=[output_plan_box, plan_buttons_row])
-        btn_edit_plan.click(enable_edit_plan_and_reload, inputs=[course_load_for_plan, output_plan_box], outputs=[output_plan_box])
-        btn_email_plan.click(email_plan_callback, inputs=[course_load_for_plan, students_input_str, output_plan_box], outputs=[output_plan_box])
-        course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
-        
-        def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
-        errors = []
-        if not name.strip():
-            errors.append("Name is required.")
-        if not email_addr.strip():
-            errors.append("Email Address is required.")
-        elif "@" not in email_addr:
-            errors.append("A valid Email Address (containing '@') is required.")
-        if not message_content_from_box.strip():
-            errors.append("Message is required.")
+                contact_status_output  = gr.Markdown(value="")
 
-        # If validation fails, show errors in the status box and leave inputs intact
-        if errors:
-            error_text = "Please correct the following errors:\n" + "\n".join(f"- {e}" for e in errors)
-            return (
-                gr.update(value=error_text),  # contact_status_output
-                None,                          # contact_name unchanged
-                None,                          # contact_email_addr unchanged
-                None,                          # contact_message unchanged
-                None                           # contact_attachment unchanged
-            )
+        # dummy buttons for proper Gradio state juggling
+        dummy_btn_1 = gr.Button(visible=False)
+        dummy_btn_2 = gr.Button(visible=False)
+        dummy_btn_3 = gr.Button(visible=False)
+        dummy_btn_4 = gr.Button(visible=False)
 
-        # Otherwise, show a “sending…” placeholder
-        yield (
-            gr.update(value="<p><i>Sending message... Please wait.</i></p>"),
-            None, None,
-            gr.update(value=""),
-            None
+        # Hook up all the buttons to their callbacks
+        btn_save.click(
+            save_setup,
+            inputs=[
+                course, instr, email, devices, pdf_file,
+                sy, sm, sd_day, ey, em, ed_day,
+                class_days_selected, students_input_str
+            ],
+            outputs=[
+                output_box, btn_save, dummy_btn_1, btn_generate_plan,
+                btn_edit_syl, btn_email_syl, btn_edit_plan,
+                btn_email_plan, syllabus_actions_row, plan_buttons_row,
+                output_plan_box, lesson_plan_setup_message,
+                course_load_for_plan
+            ],
         )
-        time.sleep(0.1)
+        btn_edit_syl.click(
+            enable_edit_syllabus_and_reload,
+            inputs=[course, output_box],
+            outputs=[output_box]
+        )
+        btn_email_syl.click(
+            email_syllabus_callback,
+            inputs=[course, students_input_str, output_box],
+            outputs=[output_box]
+        )
+        btn_generate_plan.click(
+            generate_plan_callback,
+            inputs=[course_load_for_plan],
+            outputs=[
+                output_plan_box, dummy_btn_2, dummy_btn_1,
+                btn_generate_plan, dummy_btn_3, dummy_btn_4,
+                btn_edit_plan, btn_email_plan
+            ]
+        ).then(
+            lambda: (gr.update(visible=True), gr.update(visible=True)),
+            outputs=[output_plan_box, plan_buttons_row]
+        )
+        btn_edit_plan.click(
+            enable_edit_plan_and_reload,
+            inputs=[course_load_for_plan, output_plan_box],
+            outputs=[output_plan_box]
+        )
+        btn_email_plan.click(
+            email_plan_callback,
+            inputs=[course_load_for_plan, students_input_str, output_plan_box],
+            outputs=[output_plan_box]
+        )
+        course.change(
+            lambda x: x,
+            inputs=[course],
+            outputs=[course_load_for_plan]
+        )
 
-        try:
-            subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
-            to_support_email = "easyaitutor@gmail.com"
-            html_body = (
-                f"<html><body><h3>Contact Request</h3>"
-                f"<p><b>Name:</b> {name}</p>"
-                f"<p><b>Email:</b> {email_addr}</p><hr>"
-                f"<p><b>Message:</b></p>"
-                f"<p>{message_content_from_box.replace(chr(10), '<br>')}</p>"
-                f"</body></html>"
-            )
-            success = send_email_notification(
-                to_support_email, subject, html_body, email_addr, attachment_file
-            )
+        # --- Contact Support callback ---
+        def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
+            errors = []
+            if not name.strip():
+                errors.append("Name is required.")
+            if not email_addr.strip():
+                errors.append("Email Address is required.")
+            elif "@" not in email_addr:
+                errors.append("A valid Email Address (containing '@') is required.")
+            if not message_content_from_box.strip():
+                errors.append("Message is required.")
 
-            if success:
+            if errors:
+                error_text = "Please correct the following errors:\n" + \
+                             "\n".join(f"- {e}" for e in errors)
                 return (
-                    gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
-                    gr.update(value=""),  # clear name
-                    gr.update(value=""),  # clear email
-                    gr.update(value=""),  # clear message
-                    None                   # clear attachment
+                    gr.update(value=error_text),  # status
+                    None, None, None, None         # leave fields unchanged
                 )
-            else:
+
+            # show a “sending…” placeholder
+            yield (
+                gr.update(value="<p><i>Sending message... Please wait.</i></p>"),
+                None, None,
+                gr.update(value=""),
+                None
+            )
+            time.sleep(0.1)
+
+            try:
+                subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
+                to_support_email = "easyaitutor@gmail.com"
+                html_body = (
+                    f"<html><body><h3>Contact Request</h3>"
+                    f"<p><b>Name:</b> {name}</p>"
+                    f"<p><b>Email:</b> {email_addr}</p><hr>"
+                    f"<p><b>Message:</b></p>"
+                    f"<p>{message_content_from_box.replace(chr(10), '<br>')}</p>"
+                    f"</body></html>"
+                )
+                success = send_email_notification(
+                    to_support_email, subject, html_body, email_addr, attachment_file
+                )
+                if success:
+                    return (
+                        gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
+                        gr.update(value=""), gr.update(value=""),
+                        gr.update(value=""), None
+                    )
+                else:
+                    return (
+                        gr.update(value="<p style='color:red;'>Error: Could not send message.</p>"),
+                        None, None,
+                        gr.update(value=message_content_from_box),
+                        attachment_file
+                    )
+            except Exception as e_handler:
+                print(f"Unexpected error in handle_contact_submission: {e_handler}\n{traceback.format_exc()}")
                 return (
-                    gr.update(value="<p style='color:red;'>Error: Could not send message. Check logs.</p>"),
+                    gr.update(value=f"<p style='color:red;'>Critical Error: {e_handler}.</p>"),
                     None, None,
                     gr.update(value=message_content_from_box),
                     attachment_file
                 )
 
-        except Exception as e_handler:
-            print(f"Unexpected error in handle_contact_submission: {e_handler}\n{traceback.format_exc()}")
-            return (
-                gr.update(value=f"<p style='color:red;'>Critical Error: {e_handler}.</p>"),
-                None, None,
-                gr.update(value=message_content_from_box),
-                attachment_file
-            )
-
         btn_send_contact_email.click(
-        handle_contact_submission,
-        inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
-        outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment]
-            )
+            handle_contact_submission,
+            inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
+            outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment]
+        )
 
     return instructor_demo  # Return the Blocks instance
+
 
 # --- Student Tutor UI and Logic ---
 # This will be a new section, adapted from your student tutor script
