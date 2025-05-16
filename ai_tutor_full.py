@@ -696,8 +696,6 @@ def build_instructor_ui():
                     outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment],
                     queue=True
                 )
-
-                )
             # --- END OF TabItem("Contact Support") ---
 
         # ... (dummy buttons and other .click() registrations for Tab 1 & 2) ...
