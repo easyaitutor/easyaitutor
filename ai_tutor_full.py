@@ -631,6 +631,7 @@ def build_instructor_ui():
                     btn_edit_plan     = gr.Button(value="📝 Edit Plan Text")
                     btn_email_plan    = gr.Button(value="📧 Email Lesson Plan", variant="secondary")
 
+            
             # --- Tab 3: Contact Support ---
             with gr.TabItem("Contact Support"):
                 gr.Markdown("### Send a Message to Support")
@@ -645,141 +646,141 @@ def build_instructor_ui():
                 contact_attachment = gr.File(label="Attach File (Optional)", file_count="single")
                 btn_send_contact_email = gr.Button("Send Message", variant="primary")
                 contact_status_output  = gr.Markdown(value="")
-
-        # dummy buttons for proper Gradio state juggling
-        dummy_btn_1 = gr.Button(visible=False)
-        dummy_btn_2 = gr.Button(visible=False)
-        dummy_btn_3 = gr.Button(visible=False)
-        dummy_btn_4 = gr.Button(visible=False)
-
-        # Hook up all the buttons to their callbacks
-        btn_save.click(
-            save_setup,
-            inputs=[
-                course, instr, email, devices, pdf_file,
-                sy, sm, sd_day, ey, em, ed_day,
-                class_days_selected, students_input_str
-            ],
-            outputs=[
-                output_box, btn_save, dummy_btn_1, btn_generate_plan,
-                btn_edit_syl, btn_email_syl, btn_edit_plan,
-                btn_email_plan, syllabus_actions_row, plan_buttons_row,
-                output_plan_box, lesson_plan_setup_message,
-                course_load_for_plan
-            ],
-        )
-        btn_edit_syl.click(
-            enable_edit_syllabus_and_reload,
-            inputs=[course, output_box],
-            outputs=[output_box]
-        )
-        btn_email_syl.click(
-            email_syllabus_callback,
-            inputs=[course, students_input_str, output_box],
-            outputs=[output_box]
-        )
-        btn_generate_plan.click(
-            generate_plan_callback,
-            inputs=[course_load_for_plan],
-            outputs=[
-                output_plan_box, dummy_btn_2, dummy_btn_1,
-                btn_generate_plan, dummy_btn_3, dummy_btn_4,
-                btn_edit_plan, btn_email_plan
-            ]
-        ).then(
-            lambda: (gr.update(visible=True), gr.update(visible=True)),
-            outputs=[output_plan_box, plan_buttons_row]
-        )
-        btn_edit_plan.click(
-            enable_edit_plan_and_reload,
-            inputs=[course_load_for_plan, output_plan_box],
-            outputs=[output_plan_box]
-        )
-        btn_email_plan.click(
-            email_plan_callback,
-            inputs=[course_load_for_plan, students_input_str, output_plan_box],
-            outputs=[output_plan_box]
-        )
-        course.change(
-            lambda x: x,
-            inputs=[course],
-            outputs=[course_load_for_plan]
-        )
-
-        # --- Contact Support callback ---
-        def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
-            errors = []
-            if not name.strip():
-                errors.append("Name is required.")
-            if not email_addr.strip():
-                errors.append("Email Address is required.")
-            elif "@" not in email_addr:
-                errors.append("A valid Email Address (containing '@') is required.")
-            if not message_content_from_box.strip():
-                errors.append("Message is required.")
-
-            if errors:
-                error_text = "Please correct the following errors:\n" + \
-                             "\n".join(f"- {e}" for e in errors)
-                return (
-                    gr.update(value=error_text),  # status
-                    None, None, None, None         # leave fields unchanged
-                )
-
-            # show a “sending…” placeholder
-            yield (
-                gr.update(value="<p><i>Sending message... Please wait.</i></p>"),
-                None, None,
-                gr.update(value=""),
-                None
+    
+            # dummy buttons for proper Gradio state juggling
+            dummy_btn_1 = gr.Button(visible=False)
+            dummy_btn_2 = gr.Button(visible=False)
+            dummy_btn_3 = gr.Button(visible=False)
+            dummy_btn_4 = gr.Button(visible=False)
+    
+            # Hook up all the buttons to their callbacks
+            btn_save.click(
+                save_setup,
+                inputs=[
+                    course, instr, email, devices, pdf_file,
+                    sy, sm, sd_day, ey, em, ed_day,
+                    class_days_selected, students_input_str
+                ],
+                outputs=[
+                    output_box, btn_save, dummy_btn_1, btn_generate_plan,
+                    btn_edit_syl, btn_email_syl, btn_edit_plan,
+                    btn_email_plan, syllabus_actions_row, plan_buttons_row,
+                    output_plan_box, lesson_plan_setup_message,
+                    course_load_for_plan
+                ],
             )
-            time.sleep(0.1)
-
-            try:
-                subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
-                to_support_email = "easyaitutor@gmail.com"
-                html_body = (
-                    f"<html><body><h3>Contact Request</h3>"
-                    f"<p><b>Name:</b> {name}</p>"
-                    f"<p><b>Email:</b> {email_addr}</p><hr>"
-                    f"<p><b>Message:</b></p>"
-                    f"<p>{message_content_from_box.replace(chr(10), '<br>')}</p>"
-                    f"</body></html>"
-                )
-                success = send_email_notification(
-                    to_support_email, subject, html_body, email_addr, attachment_file
-                )
-                if success:
+            btn_edit_syl.click(
+                enable_edit_syllabus_and_reload,
+                inputs=[course, output_box],
+                outputs=[output_box]
+            )
+            btn_email_syl.click(
+                email_syllabus_callback,
+                inputs=[course, students_input_str, output_box],
+                outputs=[output_box]
+            )
+            btn_generate_plan.click(
+                generate_plan_callback,
+                inputs=[course_load_for_plan],
+                outputs=[
+                    output_plan_box, dummy_btn_2, dummy_btn_1,
+                    btn_generate_plan, dummy_btn_3, dummy_btn_4,
+                    btn_edit_plan, btn_email_plan
+                ]
+            ).then(
+                lambda: (gr.update(visible=True), gr.update(visible=True)),
+                outputs=[output_plan_box, plan_buttons_row]
+            )
+            btn_edit_plan.click(
+                enable_edit_plan_and_reload,
+                inputs=[course_load_for_plan, output_plan_box],
+                outputs=[output_plan_box]
+            )
+            btn_email_plan.click(
+                email_plan_callback,
+                inputs=[course_load_for_plan, students_input_str, output_plan_box],
+                outputs=[output_plan_box]
+            )
+            course.change(
+                lambda x: x,
+                inputs=[course],
+                outputs=[course_load_for_plan]
+            )
+    
+            # --- Contact Support callback ---
+            def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
+                errors = []
+                if not name.strip():
+                    errors.append("Name is required.")
+                if not email_addr.strip():
+                    errors.append("Email Address is required.")
+                elif "@" not in email_addr:
+                    errors.append("A valid Email Address (containing '@') is required.")
+                if not message_content_from_box.strip():
+                    errors.append("Message is required.")
+    
+                if errors:
+                    error_text = "Please correct the following errors:\n" + \
+                                 "\n".join(f"- {e}" for e in errors)
                     return (
-                        gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
-                        gr.update(value=""), gr.update(value=""),
-                        gr.update(value=""), None
+                        gr.update(value=error_text),  # status
+                        None, None, None, None         # leave fields unchanged
                     )
-                else:
+    
+                # show a “sending…” placeholder
+                yield (
+                    gr.update(value="<p><i>Sending message... Please wait.</i></p>"),
+                    None, None,
+                    gr.update(value=""),
+                    None
+                )
+                time.sleep(0.1)
+    
+                try:
+                    subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
+                    to_support_email = "easyaitutor@gmail.com"
+                    html_body = (
+                        f"<html><body><h3>Contact Request</h3>"
+                        f"<p><b>Name:</b> {name}</p>"
+                        f"<p><b>Email:</b> {email_addr}</p><hr>"
+                        f"<p><b>Message:</b></p>"
+                        f"<p>{message_content_from_box.replace(chr(10), '<br>')}</p>"
+                        f"</body></html>"
+                    )
+                    success = send_email_notification(
+                        to_support_email, subject, html_body, email_addr, attachment_file
+                    )
+                    if success:
+                        return (
+                            gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
+                            gr.update(value=""), gr.update(value=""),
+                            gr.update(value=""), None
+                        )
+                    else:
+                        return (
+                            gr.update(value="<p style='color:red;'>Error: Could not send message.</p>"),
+                            None, None,
+                            gr.update(value=message_content_from_box),
+                            attachment_file
+                        )
+                except Exception as e_handler:
+                    print(f"Unexpected error in handle_contact_submission: {e_handler}\n{traceback.format_exc()}")
                     return (
-                        gr.update(value="<p style='color:red;'>Error: Could not send message.</p>"),
+                        gr.update(value=f"<p style='color:red;'>Critical Error: {e_handler}.</p>"),
                         None, None,
                         gr.update(value=message_content_from_box),
                         attachment_file
                     )
-            except Exception as e_handler:
-                print(f"Unexpected error in handle_contact_submission: {e_handler}\n{traceback.format_exc()}")
-                return (
-                    gr.update(value=f"<p style='color:red;'>Critical Error: {e_handler}.</p>"),
-                    None, None,
-                    gr.update(value=message_content_from_box),
-                    attachment_file
-                )
+    
+            btn_send_contact_email.click(
+                handle_contact_submission,
+                inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
+                outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment]
+            )
+    
+        return instructor_demo  # Return the Blocks instance
 
-        btn_send_contact_email.click(
-            handle_contact_submission,
-            inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
-            outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment]
-        )
-
-    return instructor_demo  # Return the Blocks instance
-
-
+ 
 # --- Student Tutor UI and Logic ---
 # This will be a new section, adapted from your student tutor script
 # For simplicity, we'll make it a function that returns a Gradio Blocks instance too.
