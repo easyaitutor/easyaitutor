@@ -708,9 +708,10 @@ def build_instructor_ui():
             )
     
             # --- Contact Support callback ---
-            def handle_contact_submission(...):
-                print("🔔 handle_contact_submission fired", name, email_addr, message_content_from_box)
             def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
+                #Debug Check
+                print("🔔 handle_contact_submission fired", name, email_addr, message_content_from_box)
+                
                 errors = []
                 if not name.strip():
                     errors.append("Name is required.")
