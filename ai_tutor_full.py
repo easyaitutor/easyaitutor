@@ -651,96 +651,52 @@ def build_instructor_ui():
                 # Note: Parameter names are changed slightly to avoid potential confusion
                 # with the component variables themselves, though in Gradio callbacks,
                 # they are passed by value.
-                def handle_contact_submission(name_input, email_input, message_input, attachment_input):
+                def handle_contact_submission(name, email, message, attachment):
                     errors = []
-                    if not name_input.strip():
-                        errors.append("Name is required.")
-                    if not email_input.strip():
-                        errors.append("Email Address is required.")
-                    elif "@" not in email_input: # Basic email format check
-                        errors.append("A valid Email Address (containing '@') is required.")
-                    if not message_input.strip():
-                        errors.append("Message is required.")
-
-                    # Output tuple corresponds to:
-                    # [contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment]
+                    if not name.strip():          errors.append("Name is required.")
+                    if not email.strip():         errors.append("Email is required.")
+                    elif "@" not in email:        errors.append("Enter a valid email.")
+                    if not message.strip():       errors.append("Message is required.")
                     if errors:
-                        error_text = "Please correct the following errors:\n" + \
-                                     "\n".join(f"- {e}" for e in errors)
                         return (
-                            gr.update(value=error_text),         # Update status message
-                            gr.update(value=name_input),         # Keep current name
-                            gr.update(value=email_input),        # Keep current email
-                            gr.update(value=message_input),      # Keep current message
-                            gr.update(value=attachment_input)    # Keep current attachment
+                            gr.update(value="Please fix:\n" + "\n".join(f"- {e}" for e in errors)),
+                            gr.update(value=name),
+                            gr.update(value=email),
+                            gr.update(value=message),
+                            gr.update(value=attachment)
                         )
-
-                    # If validation passes, first yield the "Sending..." message
-                    # This makes the function a generator.
-                    yield (
-                        gr.update(value="<p><i>Sending message... Please wait.</i></p>"), # Update status
-                        gr.update(value=name_input),                                      # Keep name
-                        gr.update(value=email_input),                                     # Keep email
-                        gr.update(value=message_input),                                   # Keep message
-                        gr.update(value=attachment_input)                                 # Keep attachment
-                    )
-
-                    # time.sleep(0.1) # Small delay for UI to update, often not strictly necessary with yield
-
-                    # Now, attempt to send the email
-                    try:
-                        subject = f"AI Tutor Panel Contact: {name_input} ({email_input})"
-                        to_support_email = "easyaitutor@gmail.com" # IMPORTANT: Use your actual support email
-                        html_body = (
-                            f"<html><body><h3>Contact Request</h3>"
-                            f"<p><b>Name:</b> {name_input}</p>"
-                            f"<p><b>Email:</b> {email_input}</p><hr>"
-                            f"<p><b>Message:</b></p>"
-                            f"<p>{message_input.replace(chr(10), '<br>')}</p>" # Handle newlines
-                            f"</body></html>"
-                        )
-                        # Ensure your send_email_notification function uses 'attachment_file_obj'
-                        success = send_email_notification(
-                            to_support_email, subject, html_body, from_name=email_input, attachment_file_obj=attachment_input
-                        )
-
-                        if success:
-                            # On successful send, clear the input fields
-                            return (
-                                gr.update(value="<p style='color:green;'>Message sent successfully!</p>"), # Success status
-                                gr.update(value=""),                       # Clear name
-                                gr.update(value=""),                       # Clear email
-                                gr.update(value=""),                       # Clear message
-                                gr.update(value=None)                      # Clear attachment (gr.File needs None)
-                            )
-                        else:
-                            # If send_email_notification returns False (e.g., SMTP issue handled within it)
-                            return (
-                                gr.update(value="<p style='color:red;'>Error: Could not send message. Check SMTP settings or server logs.</p>"), # Error status
-                                gr.update(value=name_input),                   # Keep name
-                                gr.update(value=email_input),                  # Keep email
-                                gr.update(value=message_input),                # Keep message
-                                gr.update(value=attachment_input)              # Keep attachment
-                            )
-                    except Exception as e_send: # Catch any other unexpected errors during sending
-                        print(f"⚠️ Error during email sending process: {e_send}\n{traceback.format_exc()}")
+                
+                    # no more yield here
+                    sent = send_email_notification("easyaitutor@gmail.com",
+                                                   f"Contact: {name} <{email}>",
+                                                   message.replace("\n","<br>"),
+                                                   from_name=email,
+                                                   attachment_file_obj=attachment)
+                
+                    if sent:
                         return (
-                            gr.update(value=f"<p style='color:red;'>Critical Error sending message: {e_send}.</p>"), # Critical error status
-                            gr.update(value=name_input),                   # Keep name
-                            gr.update(value=email_input),                  # Keep email
-                            gr.update(value=message_input),                # Keep message
-                            gr.update(value=attachment_input)              # Keep attachment
+                            gr.update(value="<span style='color:green;'>Sent! ✔</span>"),
+                            gr.update(value=""),
+                            gr.update(value=""),
+                            gr.update(value=""),
+                            gr.update(value=None)
                         )
-                # --- END OF Contact Support callback DEFINITION ---
-
-                # --- REGISTER the callback to the button's click event ---
-                # This should be at the same indentation level as the function definition,
-                # within the `with gr.TabItem("Contact Support"):` block.
+                    else:
+                        return (
+                            gr.update(value="<span style='color:red;'>Failed to send. Check SMTP.</span>"),
+                            gr.update(value=name),
+                            gr.update(value=email),
+                            gr.update(value=message),
+                            gr.update(value=attachment)
+                        )
+                
                 btn_send_contact_email.click(
                     handle_contact_submission,
                     inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
                     outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment],
-                    queue=True # Use queue for operations that might take time (like sending email)
+                    queue=True
+                )
+
                 )
             # --- END OF TabItem("Contact Support") ---
 
