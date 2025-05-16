@@ -709,9 +709,6 @@ def build_instructor_ui():
     
             # --- Contact Support callback ---
             def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
-                #Debug Check
-                print("🔔 handle_contact_submission fired", name, email_addr, message_content_from_box)
-                
                 errors = []
                 if not name.strip():
                     errors.append("Name is required.")
@@ -778,7 +775,8 @@ def build_instructor_ui():
             btn_send_contact_email.click(
                 handle_contact_submission,
                 inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
-                outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment]
+                outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment],
+                queue=True
             )
     
         return instructor_demo  # Return the Blocks instance
