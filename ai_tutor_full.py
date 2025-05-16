@@ -648,96 +648,98 @@ def build_instructor_ui():
                 contact_status_output  = gr.Markdown(value="")
 
                 # --- Contact Support callback DEFINITION ---
-                # --- Contact Support callback ---
-                def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
-                    errors = []
-                    if not name.strip():
-                        errors.append("Name is required.")
-                    if not email_addr.strip():
-                        errors.append("Email Address is required.")
-                    elif "@" not in email_addr:
-                        errors.append("A valid Email Address (containing '@') is required.")
-                    if not message_content_from_box.strip():
-                        errors.append("Message is required.")
-    
-                    if errors:
-                        error_text = "Please correct the following errors:\n" + \
-                                     "\n".join(f"- {e}" for e in errors)
+                 # --- Contact Support callback ---
+            def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
+                errors = []
+                if not name.strip():
+                    errors.append("Name is required.")
+                if not email_addr.strip():
+                    errors.append("Email Address is required.")
+                elif "@" not in email_addr:
+                    errors.append("A valid Email Address (containing '@') is required.")
+                if not message_content_from_box.strip():
+                    errors.append("Message is required.")
+
+                if errors:
+                    error_text = "Please correct the following errors:\n" + \
+                                 "\n".join(f"- {e}" for e in errors)
+                    return (
+                        gr.update(value=error_text),
+                        gr.update(value=name),
+                        gr.update(value=email_addr),
+                        gr.update(value=message_content_from_box),
+                        gr.update(value=attachment_file)
+                    )
+
+                # first yield a “sending…” placeholder
+                try:
+                    yield (
+                        gr.update(value="<p><i>Sending message... Please wait.</i></p>"),
+                        gr.update(value=name),
+                        gr.update(value=email_addr),
+                        gr.update(value=message_content_from_box),
+                        gr.update(value=attachment_file)
+                    )
+                except Exception as e_handler:
+                    print(f"⚠️ Placeholder yield failed: {e_handler}\n{traceback.format_exc()}")
+                    return (
+                        gr.update(value=f"<p style='color:red;'>Critical Error showing placeholder.</p>"),
+                        gr.update(value=name),
+                        gr.update(value=email_addr),
+                        gr.update(value=message_content_from_box),
+                        gr.update(value=attachment_file)
+                    )
+
+                # simulate a tiny delay and then actually send
+                time.sleep(0.1)
+                try:
+                    subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
+                    to_support_email = "easyaitutor@gmail.com"
+                    html_body = (
+                        f"<html><body><h3>Contact Request</h3>"
+                        f"<p><b>Name:</b> {name}</p>"
+                        f"<p><b>Email:</b> {email_addr}</p><hr>"
+                        f"<p><b>Message:</b></p>"
+                        f"<p>{message_content_from_box.replace(chr(10), '<br>')}</p>"
+                        f"</body></html>"
+                    )
+                    success = send_email_notification(
+                        to_support_email, subject, html_body, email_addr, attachment_file
+                    )
+                    if success:
                         return (
-                            gr.update(value=error_text),
-                            gr.update(value=name),
-                            gr.update(value=email_addr),
-                            gr.update(value=message_content_from_box),
-                            gr.update(value=attachment_file)
+                            gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
+                            gr.update(value=""),  # clear name
+                            gr.update(value=""),  # clear email
+                            gr.update(value=""),  # clear message
+                            gr.update(value=None)  # clear attachment
                         )
-    
-                    # first yield a “sending…” placeholder
-                    try:
-                        yield (
-                            gr.update(value="<p><i>Sending message... Please wait.</i></p>"),
-                            gr.update(value=name),
-                            gr.update(value=email_addr),
-                            gr.update(value=message_content_from_box),
-                            gr.update(value=attachment_file)
-                        )
-                    except Exception as e_handler:
-                        print(f"⚠️ Placeholder yield failed: {e_handler}\n{traceback.format_exc()}")
+                    else:
                         return (
-                            gr.update(value=f"<p style='color:red;'>Critical Error showing placeholder.</p>"),
+                            gr.update(value="<p style='color:red;'>Error: Could not send message.</p>"),
                             gr.update(value=name),
                             gr.update(value=email_addr),
                             gr.update(value=message_content_from_box),
                             gr.update(value=attachment_file)
                         )
-    
-                    # simulate a tiny delay and then actually send
-                    time.sleep(0.1)
-                    try:
-                        subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
-                        to_support_email = "easyaitutor@gmail.com"
-                        html_body = (
-                            f"<html><body><h3>Contact Request</h3>"
-                            f"<p><b>Name:</b> {name}</p>"
-                            f"<p><b>Email:</b> {email_addr}</p><hr>"
-                            f"<p><b>Message:</b></p>"
-                            f"<p>{message_content_from_box.replace(chr(10), '<br>')}</p>"
-                            f"</body></html>"
-                        )
-                        success = send_email_notification(
-                            to_support_email, subject, html_body, email_addr, attachment_file
-                        )
-                        if success:
-                            return (
-                                gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
-                                gr.update(value=""),  # clear name
-                                gr.update(value=""),  # clear email
-                                gr.update(value=""),  # clear message
-                                gr.update(value=None)  # clear attachment
-                            )
-                        else:
-                            return (
-                                gr.update(value="<p style='color:red;'>Error: Could not send message.</p>"),
-                                gr.update(value=name),
-                                gr.update(value=email_addr),
-                                gr.update(value=message_content_from_box),
-                                gr.update(value=attachment_file)
-                            )
-                    except Exception as e_send:
-                        print(f"⚠️ Error sending email: {e_send}\n{traceback.format_exc()}")
-                        return (
-                            gr.update(value=f"<p style='color:red;'>Critical Error sending message.</p>"),
-                            gr.update(value=name),
-                            gr.update(value=email_addr),
-                            gr.update(value=message_content_from_box),
-                            gr.update(value=attachment_file)
-                        )
-    
-                btn_send_contact_email.click(
-                    handle_contact_submission,
-                    inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
-                    outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment],
-                    queue=True
-                )
+                except Exception as e_send:
+                    print(f"⚠️ Error sending email: {e_send}\n{traceback.format_exc()}")
+                    return (
+                        gr.update(value=f"<p style='color:red;'>Critical Error sending message.</p>"),
+                        gr.update(value=name),
+                        gr.update(value=email_addr),
+                        gr.update(value=message_content_from_box),
+                        gr.update(value=attachment_file)
+                    )
+
+            btn_send_contact_email.click(
+                handle_contact_submission,
+                inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
+                outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment],
+                queue=True
+            )
+
+
         dummy_btn_1 = gr.Button(visible=False)
         dummy_btn_2 = gr.Button(visible=False)
         dummy_btn_3 = gr.Button(visible=False)
