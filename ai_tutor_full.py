@@ -632,7 +632,7 @@ def build_instructor_ui():
                     btn_email_plan    = gr.Button(value="📧 Email Lesson Plan", variant="secondary")
 
             
-                        # --- Tab 3: Contact Support ---
+            # --- Tab 3: Contact Support ---
             with gr.TabItem("Contact Support"):
                 gr.Markdown("### Send a Message to Support")
                 with gr.Row():
@@ -645,112 +645,169 @@ def build_instructor_ui():
                 )
                 contact_attachment = gr.File(label="Attach File (Optional)", file_count="single")
                 btn_send_contact_email = gr.Button("Send Message", variant="primary")
-                contact_status_output  = gr.Markdown(value="")
+                contact_status_output  = gr.Markdown(value="") # For status messages
 
                 # --- Contact Support callback DEFINITION ---
-                 # --- Contact Support callback ---
-            def handle_contact_submission(name, email_addr, message_content_from_box, attachment_file):
-                errors = []
-                if not name.strip():
-                    errors.append("Name is required.")
-                if not email_addr.strip():
-                    errors.append("Email Address is required.")
-                elif "@" not in email_addr:
-                    errors.append("A valid Email Address (containing '@') is required.")
-                if not message_content_from_box.strip():
-                    errors.append("Message is required.")
+                # Note: Parameter names are changed slightly to avoid potential confusion
+                # with the component variables themselves, though in Gradio callbacks,
+                # they are passed by value.
+                def handle_contact_submission(name_input, email_input, message_input, attachment_input):
+                    errors = []
+                    if not name_input.strip():
+                        errors.append("Name is required.")
+                    if not email_input.strip():
+                        errors.append("Email Address is required.")
+                    elif "@" not in email_input: # Basic email format check
+                        errors.append("A valid Email Address (containing '@') is required.")
+                    if not message_input.strip():
+                        errors.append("Message is required.")
 
-                if errors:
-                    error_text = "Please correct the following errors:\n" + \
-                                 "\n".join(f"- {e}" for e in errors)
-                    return (
-                        gr.update(value=error_text),
-                        gr.update(value=name),
-                        gr.update(value=email_addr),
-                        gr.update(value=message_content_from_box),
-                        gr.update(value=attachment_file)
-                    )
+                    # Output tuple corresponds to:
+                    # [contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment]
+                    if errors:
+                        error_text = "Please correct the following errors:\n" + \
+                                     "\n".join(f"- {e}" for e in errors)
+                        return (
+                            gr.update(value=error_text),         # Update status message
+                            gr.update(value=name_input),         # Keep current name
+                            gr.update(value=email_input),        # Keep current email
+                            gr.update(value=message_input),      # Keep current message
+                            gr.update(value=attachment_input)    # Keep current attachment
+                        )
 
-                # first yield a “sending…” placeholder
-                try:
+                    # If validation passes, first yield the "Sending..." message
+                    # This makes the function a generator.
                     yield (
-                        gr.update(value="<p><i>Sending message... Please wait.</i></p>"),
-                        gr.update(value=name),
-                        gr.update(value=email_addr),
-                        gr.update(value=message_content_from_box),
-                        gr.update(value=attachment_file)
-                    )
-                except Exception as e_handler:
-                    print(f"⚠️ Placeholder yield failed: {e_handler}\n{traceback.format_exc()}")
-                    return (
-                        gr.update(value=f"<p style='color:red;'>Critical Error showing placeholder.</p>"),
-                        gr.update(value=name),
-                        gr.update(value=email_addr),
-                        gr.update(value=message_content_from_box),
-                        gr.update(value=attachment_file)
+                        gr.update(value="<p><i>Sending message... Please wait.</i></p>"), # Update status
+                        gr.update(value=name_input),                                      # Keep name
+                        gr.update(value=email_input),                                     # Keep email
+                        gr.update(value=message_input),                                   # Keep message
+                        gr.update(value=attachment_input)                                 # Keep attachment
                     )
 
-                # simulate a tiny delay and then actually send
-                time.sleep(0.1)
-                try:
-                    subject = f"AI Tutor Panel Contact: {name} ({email_addr})"
-                    to_support_email = "easyaitutor@gmail.com"
-                    html_body = (
-                        f"<html><body><h3>Contact Request</h3>"
-                        f"<p><b>Name:</b> {name}</p>"
-                        f"<p><b>Email:</b> {email_addr}</p><hr>"
-                        f"<p><b>Message:</b></p>"
-                        f"<p>{message_content_from_box.replace(chr(10), '<br>')}</p>"
-                        f"</body></html>"
-                    )
-                    success = send_email_notification(
-                        to_support_email, subject, html_body, email_addr, attachment_file
-                    )
-                    if success:
-                        return (
-                            gr.update(value="<p style='color:green;'>Message sent successfully!</p>"),
-                            gr.update(value=""),  # clear name
-                            gr.update(value=""),  # clear email
-                            gr.update(value=""),  # clear message
-                            gr.update(value=None)  # clear attachment
+                    # time.sleep(0.1) # Small delay for UI to update, often not strictly necessary with yield
+
+                    # Now, attempt to send the email
+                    try:
+                        subject = f"AI Tutor Panel Contact: {name_input} ({email_input})"
+                        to_support_email = "easyaitutor@gmail.com" # IMPORTANT: Use your actual support email
+                        html_body = (
+                            f"<html><body><h3>Contact Request</h3>"
+                            f"<p><b>Name:</b> {name_input}</p>"
+                            f"<p><b>Email:</b> {email_input}</p><hr>"
+                            f"<p><b>Message:</b></p>"
+                            f"<p>{message_input.replace(chr(10), '<br>')}</p>" # Handle newlines
+                            f"</body></html>"
                         )
-                    else:
-                        return (
-                            gr.update(value="<p style='color:red;'>Error: Could not send message.</p>"),
-                            gr.update(value=name),
-                            gr.update(value=email_addr),
-                            gr.update(value=message_content_from_box),
-                            gr.update(value=attachment_file)
+                        # Ensure your send_email_notification function uses 'attachment_file_obj'
+                        success = send_email_notification(
+                            to_support_email, subject, html_body, from_name=email_input, attachment_file_obj=attachment_input
                         )
-                except Exception as e_send:
-                    print(f"⚠️ Error sending email: {e_send}\n{traceback.format_exc()}")
-                    return (
-                        gr.update(value=f"<p style='color:red;'>Critical Error sending message.</p>"),
-                        gr.update(value=name),
-                        gr.update(value=email_addr),
-                        gr.update(value=message_content_from_box),
-                        gr.update(value=attachment_file)
-                    )
 
-            btn_send_contact_email.click(
-                handle_contact_submission,
-                inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
-                outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment],
-                queue=True
-            )
+                        if success:
+                            # On successful send, clear the input fields
+                            return (
+                                gr.update(value="<p style='color:green;'>Message sent successfully!</p>"), # Success status
+                                gr.update(value=""),                       # Clear name
+                                gr.update(value=""),                       # Clear email
+                                gr.update(value=""),                       # Clear message
+                                gr.update(value=None)                      # Clear attachment (gr.File needs None)
+                            )
+                        else:
+                            # If send_email_notification returns False (e.g., SMTP issue handled within it)
+                            return (
+                                gr.update(value="<p style='color:red;'>Error: Could not send message. Check SMTP settings or server logs.</p>"), # Error status
+                                gr.update(value=name_input),                   # Keep name
+                                gr.update(value=email_input),                  # Keep email
+                                gr.update(value=message_input),                # Keep message
+                                gr.update(value=attachment_input)              # Keep attachment
+                            )
+                    except Exception as e_send: # Catch any other unexpected errors during sending
+                        print(f"⚠️ Error during email sending process: {e_send}\n{traceback.format_exc()}")
+                        return (
+                            gr.update(value=f"<p style='color:red;'>Critical Error sending message: {e_send}.</p>"), # Critical error status
+                            gr.update(value=name_input),                   # Keep name
+                            gr.update(value=email_input),                  # Keep email
+                            gr.update(value=message_input),                # Keep message
+                            gr.update(value=attachment_input)              # Keep attachment
+                        )
+                # --- END OF Contact Support callback DEFINITION ---
 
+                # --- REGISTER the callback to the button's click event ---
+                # This should be at the same indentation level as the function definition,
+                # within the `with gr.TabItem("Contact Support"):` block.
+                btn_send_contact_email.click(
+                    handle_contact_submission,
+                    inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
+                    outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment],
+                    queue=True # Use queue for operations that might take time (like sending email)
+                )
+            # --- END OF TabItem("Contact Support") ---
 
+        # ... (dummy buttons and other .click() registrations for Tab 1 & 2) ...
+        # These should be at the indentation level of `with gr.Tabs():` or `with gr.Blocks():`
+        # depending on where they are defined in your full structure.
+        # Based on your snippet, they are likely direct children of `with gr.Blocks()`.
         dummy_btn_1 = gr.Button(visible=False)
         dummy_btn_2 = gr.Button(visible=False)
         dummy_btn_3 = gr.Button(visible=False)
         dummy_btn_4 = gr.Button(visible=False)
-        btn_save.click(save_setup, inputs=[course, instr, email, devices, pdf_file, sy, sm, sd_day, ey, em, ed_day, class_days_selected, students_input_str], outputs=[output_box, btn_save, dummy_btn_1, btn_generate_plan, btn_edit_syl, btn_email_syl, btn_edit_plan, btn_email_plan, syllabus_actions_row, plan_buttons_row, output_plan_box, lesson_plan_setup_message, course_load_for_plan])
-        btn_edit_syl.click(enable_edit_syllabus_and_reload, inputs=[course, output_box], outputs=[output_box])
-        btn_email_syl.click(email_syllabus_callback, inputs=[course, students_input_str, output_box], outputs=[output_box])
-        btn_generate_plan.click(generate_plan_callback, inputs=[course_load_for_plan], outputs=[output_plan_box, dummy_btn_2, dummy_btn_1, btn_generate_plan, dummy_btn_3, dummy_btn_4, btn_edit_plan, btn_email_plan]).then(lambda: (gr.update(visible=True), gr.update(visible=True)), outputs=[output_plan_box, plan_buttons_row])
-        btn_edit_plan.click(enable_edit_plan_and_reload, inputs=[course_load_for_plan, output_plan_box], outputs=[output_plan_box])
-        btn_email_plan.click(email_plan_callback, inputs=[course_load_for_plan, students_input_str, output_plan_box], outputs=[output_plan_box])
-        course.change(lambda x: x, inputs=[course], outputs=[course_load_for_plan])
+
+        # Hook up all the buttons to their callbacks
+        # These are also likely direct children of `with gr.Blocks()`.
+        btn_save.click(
+            save_setup,
+            inputs=[
+                course, instr, email, devices, pdf_file,
+                sy, sm, sd_day, ey, em, ed_day,
+                class_days_selected, students_input_str
+            ],
+            outputs=[
+                output_box, btn_save, dummy_btn_1, btn_generate_plan,
+                btn_edit_syl, btn_email_syl, btn_edit_plan,
+                btn_email_plan, syllabus_actions_row, plan_buttons_row,
+                output_plan_box, lesson_plan_setup_message,
+                course_load_for_plan
+            ],
+        )
+        btn_edit_syl.click(
+            enable_edit_syllabus_and_reload,
+            inputs=[course, output_box],
+            outputs=[output_box]
+        )
+        btn_email_syl.click(
+            email_syllabus_callback,
+            inputs=[course, students_input_str, output_box],
+            outputs=[output_box]
+        )
+        btn_generate_plan.click(
+            generate_plan_callback,
+            inputs=[course_load_for_plan],
+            outputs=[
+                output_plan_box, dummy_btn_2, dummy_btn_1,
+                btn_generate_plan, dummy_btn_3, dummy_btn_4,
+                btn_edit_plan, btn_email_plan
+            ]
+        ).then(
+            lambda: (gr.update(visible=True), gr.update(visible=True)),
+            outputs=[output_plan_box, plan_buttons_row]
+        )
+        btn_edit_plan.click(
+            enable_edit_plan_and_reload,
+            inputs=[course_load_for_plan, output_plan_box],
+            outputs=[output_plan_box]
+        )
+        btn_email_plan.click(
+            email_plan_callback,
+            inputs=[course_load_for_plan, students_input_str, output_plan_box],
+            outputs=[output_plan_box]
+        )
+        course.change(
+            lambda x: x,
+            inputs=[course],
+            outputs=[course_load_for_plan]
+        )
+    # This return is for the build_instructor_ui function
     return instructor_demo
 
  
