@@ -778,7 +778,7 @@ def build_instructor_ui():
                     outputs=[contact_status_output, contact_name, contact_email_addr, contact_message, contact_attachment],
                     queue=True
                     )
-                return instructor_demo  # Return the Blocks instance
+        return instructor_demo  # Return the Blocks instance
 
  
 # --- Student Tutor UI and Logic ---
