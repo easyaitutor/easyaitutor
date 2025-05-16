@@ -673,15 +673,21 @@ def build_instructor_ui():
 
                     # show a “sending…” placeholder
                     yield (
-                        gr.update(value="<p><i>Sending message... Please wait.</i></p>"),
-                        gr.update(value=name),
-                        gr.update(value=email_addr),
-                        gr.update(value=message_content_from_box), # Keep message during sending
-                        gr.update(value=attachment_file) gr.update(value=attachment_file))
-                    except Exception as e_handler:
-                        print(f"Unexpected error in handle_contact_submission: {e_handler}\n{traceback.format_exc()}")
-                        return (gr.update(value=f"<p style='color:red;'>Critical Error: {e_handler}. Please check server logs.</p>"), gr.update(value=name), gr.update(value=email_addr), gr.update(value=message_content_from_box), gr.update(value=attachment_file))
-
++                        gr.update(value="<p><i>Sending message... Please wait.</i></p>"),
++                        gr.update(value=name),
++                        gr.update(value=email_addr),
++                        gr.update(value=message_content_from_box),  # Keep message during sending
++                        gr.update(value=attachment_file)
++                    )
++                except Exception as e_handler:
+                     print(f"Unexpected error in handle_contact_submission: {e_handler}\n{traceback.format_exc()}")
+                     return (
+                         gr.update(value=f"<p style='color:red;'>Critical Error: {e_handler}. Please check server logs.</p>"),
+                         gr.update(value=name),
+                         gr.update(value=email_addr),
+                         gr.update(value=message_content_from_box),
+                         gr.update(value=attachment_file)
+                     )
                 btn_send_contact_email.click(
                     handle_contact_submission,
                     inputs=[contact_name, contact_email_addr, contact_message, contact_attachment],
