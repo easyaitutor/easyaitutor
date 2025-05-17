@@ -1,6 +1,7 @@
 import os
 import io
 import json
+from datetime import datetime
 import traceback
 import re
 from pathlib import Path
@@ -10,7 +11,9 @@ import random
 import time
 import mimetypes
 import csv # For simple progress logging
-
+import matplotlib.pyplot as plt
+import base64
+from io import BytesIO
 import openai
 import gradio as gr
 from docx import Document
@@ -981,12 +984,114 @@ def build_student_tutor_ui(course_id: str, lesson_id: int, student_id: str, less
                 print(f"STUDENT_TUTOR: TTS for bot reply failed: {e_tts}")
 
             if next_mode == "ending_session":
-                # Log progress here
-                session_end_time = datetime.now(dt_timezone.utc)
-                # session_duration = (session_end_time - st_session_start_time.value).total_seconds() # Needs st_session_start_time from state
-                # For now, log placeholder duration
-                log_student_progress(s_id, c_id, l_id, f"{profile['quiz_score']['correct']}/{profile['quiz_score']['total']}", 0)
+                # 1) Log student progress
+            session_end = datetime.now(dt_timezone.utc)
+            duration_secs = (session_end - st_session_start_time.value).total_seconds()
+            log_student_progress(
+                s_id, c_id, l_id,
+                f"{profile['quiz_score']['correct']}/{profile['quiz_score']['total']}",
+                duration_secs,
+                engagement_notes=f"Clarifications:{profile.get('clarifications',0)} Corrections:{profile.get('corrections',0)}"
+            )
 
+            # 2) Build session data dict
+            session_data = {
+                "student_id":        s_id,
+                "course_id":         c_id,
+                "lesson_id":         l_id,
+                "topic":             topic,
+                "duration_min":      round(duration_secs/60,1),
+                "student_turns":     sum(1 for m in chat_h if m["role"]=="user"),
+                "tutor_responses":   sum(1 for m in chat_h if m["role"]=="assistant"),
+                "quiz_score":        f"{profile['quiz_score']['correct']}/{profile['quiz_score']['total']}",
+                "clarifications":    profile.get("clarifications", 0),
+                "corrections":       profile.get("corrections", 0),
+                # add more fields if you like…
+            }
+
+            # Helper to encode a Matplotlib figure as base64 PNG
+            def fig_to_base64(fig):
+                buf = BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight")
+                buf.seek(0)
+                data = base64.b64encode(buf.read()).decode("ascii")
+                plt.close(fig)
+                return data
+
+            # 3) Make an engagement pie chart
+            labels = ["Clarifications","Corrections","Remaining"]
+            sizes = [
+                session_data["clarifications"],
+                session_data["corrections"],
+                max(0, session_data["student_turns"] - session_data["clarifications"] - session_data["corrections"])
+            ]
+            fig1, ax1 = plt.subplots(figsize=(2,2))
+            ax1.pie(sizes, labels=labels, autopct="%d", startangle=90)
+            ax1.axis("equal")
+            engagement_png = fig_to_base64(fig1)
+
+            # 4) Make an interaction bar chart
+            fig2, ax2 = plt.subplots(figsize=(2,2))
+            ax2.bar(["Student","Tutor"],
+                    [session_data["student_turns"], session_data["tutor_responses"]],
+                    color=["#4C9F70","#3584A7"])
+            ax2.set_ylabel("Count")
+            interaction_png = fig_to_base64(fig2)
+
+            # 5) Ask the LLM for summary + suggestions
+            summary_resp = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role":"system","content":"You are an assistant generating a brief class summary and two suggestions."},
+                    {"role":"user","content":
+                        f"Session data:\n{json.dumps(session_data, indent=2)}\n\n"
+                        "Write:\n1) One-paragraph summary.\n2) Two bullet-point suggestions to improve next lesson."
+                    }
+                ],
+                temperature=0.3,
+                max_tokens=200
+            )
+            feedback_text = summary_resp.choices[0].message.content.strip()
+
+            # 6) Persist feedback in config JSON
+            cfg_path = CONFIG_DIR / f"{c_id.replace(' ','_').lower()}_config.json"
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            cfg.setdefault("session_feedback", []).append({
+                "timestamp": session_end.isoformat(),
+                "student_id": s_id,
+                "lesson_id": l_id,
+                "metrics": session_data,
+                "feedback": feedback_text
+            })
+            cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            # 7) Build & send the instructor email
+            instr = cfg["instructor"]
+            subject = f"AI Tutor Report: {cfg['course_name']} Lesson {l_id} for {s_id}"
+            email_body = f"""
+            <html><body>
+              <h2>Session Report: {cfg['course_name']} — Lesson {l_id}</h2>
+              <p><strong>Student:</strong> {s_id}</p>
+              <p><strong>Lesson Topic:</strong> {topic}</p>
+              <p><strong>Duration:</strong> {session_data['duration_min']} min</p>
+              <hr>
+              <h3>AI-Generated Feedback</h3>
+              <p>{feedback_text.replace(chr(10),'<br>')}</p>
+              <hr>
+              <h3>Engagement Breakdown</h3>
+              <img src="data:image/png;base64,{engagement_png}" alt="Engagement">
+              <h3>Interaction Volume</h3>
+              <img src="data:image/png;base64,{interaction_png}" alt="Interaction">
+              <hr>
+              <h3>Reply Templates</h3>
+              <p><em>Bravo Template:</em><br>
+                 “Great job — you scored {profile['quiz_score']['correct']}/{profile['quiz_score']['total']} 
+                 and participated actively. Keep it up!”</p>
+              <p><em>Encourage Template:</em><br>
+                 “Let’s review the missed items and try again. Focus on…”</p>
+            </body></html>
+            """
+            send_email_notification(instr["email"], subject, email_body, from_name="AI Tutor System")
 
             return display_h, chat_h, profile, next_mode, turns, teaching_turns, audio_fp_update, gr.update(value=None), gr.update(value="")
 
