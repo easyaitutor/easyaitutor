@@ -1029,10 +1029,10 @@ templates = Jinja2Templates(directory="templates") # Create a 'templates' direct
 
 @app.get("/class", response_class=HTMLResponse)
 async def get_student_lesson_page(request: Request, token: str = None):
-
+    """
     Serves the initial HTML page that will then load the Gradio student tutor UI.
     Validates token and prepares lesson context.
-
+    """
     if not token:
         return HTMLResponse("<h3>Error: Access token missing.</h3>", status_code=400)
     try:
