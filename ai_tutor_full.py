@@ -39,6 +39,9 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+# --- APScheduler Setup & Jobs ---
+scheduler = BackgroundScheduler(timezone="UTC") 
+
 # Health‐check endpoint (only on localhost once you bind to 127.0.0.1)
 @app.get("/healthz")
 def healthz():
@@ -326,8 +329,6 @@ def generate_plan_by_week_structured_and_formatted(cfg):
         formatted_lines.append('')
     return "\n".join(formatted_lines), structured_lessons
 
-# --- APScheduler Setup & Jobs ---
-scheduler = BackgroundScheduler(timezone="UTC") 
 # ... (send_daily_class_reminders and check_student_progress_and_notify_professor functions as previously defined) ...
 def send_daily_class_reminders():
     print(f"SCHEDULER: Running daily class reminder job at {datetime.now(dt_timezone.utc)}")
@@ -1020,25 +1021,13 @@ def build_student_tutor_ui(course_id: str, lesson_id: int, student_id: str, less
         )
     return student_demo
 
-
-# --- FastAPI App and Routes ---
-app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-
-# Mount Instructor Panel UI
-instructor_ui_instance = build_instructor_ui()
-if instructor_ui_instance:
-    app = gr.mount_gradio_app(app, instructor_ui_instance, path="/") # Changed path
-else:
-    print("ERROR: build_instructor_ui() returned None. Instructor panel not mounted.")
-
 # Templates for serving the initial HTML for the student tutor
 templates = Jinja2Templates(directory="templates") # Create a 'templates' directory
 # You might need to serve static files if your student UI has CSS/JS not handled by Gradio
 # app.mount("/static_student", StaticFiles(directory="static_student"), name="static_student")
 
 
-@app.get("/class", response_class=HTMLResponse)
+("/class", response_class=HTMLResponse)
 async def get_student_lesson_page(request: Request, token: str = None):
     """
     Serves the initial HTML page that will then load the Gradio student tutor UI.
@@ -1222,10 +1211,6 @@ async def shutdown_event():
 # The student_tutor_ui_instance would be created by build_student_tutor_ui
 # student_tutor_ui_instance = build_student_tutor_ui( DYNAMIC PARAMS NEEDED HERE )
 # app = gr.mount_gradio_app(app, student_tutor_ui_instance, path="/student_tutor_interface")
-
-
-@app.get("/healthz")
-def healthz(): return {"status":"ok", "scheduler_running": scheduler.running if 'scheduler' in globals() and scheduler else False}
 
 if __name__ == "__main__":
     print("Starting App. Instructor Panel at /instructor. Student access via /class?token=...")
