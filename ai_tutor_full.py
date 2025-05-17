@@ -17,7 +17,8 @@ from docx import Document
 import smtplib
 from email.message import EmailMessage
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.responses import RedirectResponse
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates # For serving the student UI shell
 from fastapi.staticfiles import StaticFiles # If you have static assets for student UI
@@ -27,6 +28,30 @@ import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi.middleware.cors import CORSMiddleware
+
+# ─── Create FastAPI app & CORS ───────────────────────────────────────────────
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+# Health‐check endpoint (only on localhost once you bind to 127.0.0.1)
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok", "scheduler_running": scheduler.running}
+
+# Mount your Gradio Instructor UI under /instructor 
+instructor_ui = build_instructor_ui()
+app = gr.mount_gradio_app(app, instructor_ui, path="/instructor")
+
+# Redirect root (/) → /instructor so users just type your domain 
+@app.get("/")
+def root():
+    return RedirectResponse(url="/instructor")
 
 # Attempt to import fitz (PyMuPDF)
 try:
@@ -1216,7 +1241,12 @@ if __name__ == "__main__":
 
     # The FastAPI app should be run with Uvicorn for both instructor and student parts to work via HTTP.
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    uvicorn.run(
+    app,
+    host="127.0.0.1",               # ← bind only on localhost
+    port=int(os.getenv("PORT", 8000)),
+    reload=True                    # optional: enable auto-reload
+)
 
     # Keep main thread alive for scheduler if not using uvicorn's lifecycle for it
     # This is generally handled by uvicorn when running the FastAPI app.
