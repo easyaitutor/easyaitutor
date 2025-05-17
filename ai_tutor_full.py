@@ -47,15 +47,6 @@ scheduler = BackgroundScheduler(timezone="UTC")
 def healthz():
     return {"status": "ok", "scheduler_running": scheduler.running}
 
-# Mount your Gradio Instructor UI under /instructor 
-instructor_ui = build_instructor_ui()
-app = gr.mount_gradio_app(app, instructor_ui, path="/instructor")
-
-# Redirect root (/) → /instructor so users just type your domain 
-@app.get("/")
-def root():
-    return RedirectResponse(url="/instructor")
-
 # Attempt to import fitz (PyMuPDF)
 try:
     import fitz
@@ -790,6 +781,14 @@ def build_instructor_ui():
     # This return is for the build_instructor_ui function
     return instructor_demo
 
+# Mount your Gradio Instructor UI under /instructor 
+instructor_ui = build_instructor_ui()
+app = gr.mount_gradio_app(app, instructor_ui, path="/instructor")
+
+# Redirect root (/) → /instructor so users just type your domain 
+@app.get("/")
+def root():
+    return RedirectResponse(url="/instructor")
  
 # --- Student Tutor UI and Logic ---
 # This will be a new section, adapted from your student tutor script
@@ -1220,19 +1219,6 @@ if __name__ == "__main__":
     
     # To run this: uvicorn main_script_name:app --reload --port 8000
     # Then access http://localhost:8000/instructor
-    
-    # For local testing of Gradio UI directly (without full FastAPI routing for /class)
-    # instructor_ui_instance.launch(server_name="0.0.0.0", server_port=int(os.getenv("PORT",7860)))
-
-    # The FastAPI app should be run with Uvicorn for both instructor and student parts to work via HTTP.
-    import uvicorn
-    uvicorn.run(
-    app,
-    host="127.0.0.1",               # ← bind only on localhost
-    port=int(os.getenv("PORT", 8000)),
-    reload=True                    # optional: enable auto-reload
-)
-
     # Keep main thread alive for scheduler if not using uvicorn's lifecycle for it
     # This is generally handled by uvicorn when running the FastAPI app.
     # try:
