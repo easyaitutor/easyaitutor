@@ -11,3 +11,4 @@ PyJWT
 requests
 python-multipart 
 # Add any other direct dependencies your code might have picked up
+matplotlib
