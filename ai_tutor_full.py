@@ -610,40 +610,91 @@ def build_instructor_ui():
             with gr.TabItem("Course Setup & Syllabus"):
                 with gr.Row():
                     course = gr.Textbox(label="Course Name*")
-                    instr = gr.Textbox(label="Instructor Name*")
-                    email = gr.Textbox(label="Instructor Email*", type="email")
+                    instr  = gr.Textbox(label="Instructor Name*")
+                    email  = gr.Textbox(label="Instructor Email*", type="email")
                 pdf_file = gr.File(label="Upload Course Material PDF*", file_types=[".pdf"])
+            
                 with gr.Row():
                     with gr.Column(scale=2):
                         gr.Markdown("#### Course Schedule")
-                        years      = [str(y) for y in range(datetime.now().year, datetime.now().year + 5)]
-                        months     = [f"{m:02d}" for m in range(1, 13)]
-                        days_list  = [f"{d:02d}" for d in range(1, 32)]
+                        years     = [str(y) for y in range(datetime.now().year, datetime.now().year + 5)]
+                        months    = [f"{m:02d}" for m in range(1, 13)]
+                        days_list = [f"{d:02d}" for d in range(1, 32)]
+            
                         with gr.Row():
-                            sy       = gr.Dropdown(years, label="Start Year*")
-                            sm       = gr.Dropdown(months, label="Start Month*")
-                            sd_day   = gr.Dropdown(days_list, label="Start Day*")
+                            sy     = gr.Dropdown(years, label="Start Year*")
+                            sm     = gr.Dropdown(months, label="Start Month*")
+                            sd_day = gr.Dropdown(days_list, label="Start Day*")
+            
                         with gr.Row():
-                            ey       = gr.Dropdown(years, label="End Year*")
-                            em       = gr.Dropdown(months, label="End Month*")
-                            ed_day   = gr.Dropdown(days_list, label="End Day*")
-                        class_days_selected = gr.CheckboxGroup(list(days_map.keys()), label="Class Days*")
+                            ey     = gr.Dropdown(years, label="End Year*")
+                            em     = gr.Dropdown(months, label="End Month*")
+                            ed_day = gr.Dropdown(days_list, label="End Day*")
+            
+                        class_days_selected = gr.CheckboxGroup(
+                            list(days_map.keys()),
+                            label="Class Days*",
+                            info="Select days of the week classes are held."
+                        )
+            
                     with gr.Column(scale=1):
                         gr.Markdown("#### Student & Access")
-                        devices            = gr.CheckboxGroup(["Phone", "PC", "Tablet"], label="Allowed Devices", value=["PC"])
+                        devices            = gr.CheckboxGroup(
+                            ["Phone", "PC", "Tablet"],
+                            label="Allowed Devices",
+                            value=["PC"]
+                        )
                         students_input_str = gr.Textbox(
                             label="Students (Name,Email per line)",
                             lines=5,
                             placeholder="S. One,s1@ex.com\nS. Two,s2@ex.com"
                         )
-                btn_save  = gr.Button("1. Save Setup & Generate Syllabus", variant="primary")
+            
+                # Save button + inline error placeholder
+                btn_save   = gr.Button("1. Save Setup & Generate Syllabus", variant="primary")
+                save_error = gr.Markdown("", visible=False, elem_id="save_error_msg")
+            
                 gr.Markdown("---")
+            
                 output_box = gr.Textbox(
-                    label="Output", lines=20, interactive=False, visible=False, show_copy_button=True
+                    label="Output",
+                    lines=20,
+                    interactive=False,
+                    visible=False,
+                    show_copy_button=True
                 )
+            
                 with gr.Row(visible=False) as syllabus_actions_row:
-                    btn_edit_syl  = gr.Button(value="📝 Edit Syllabus Text")
-                    btn_email_syl = gr.Button(value="📧 Email Syllabus", variant="secondary")
+                    btn_edit_syl  = gr.Button("📝 Edit Syllabus Text")
+                    btn_email_syl = gr.Button("📧 Email Syllabus", variant="secondary")
+            
+                # Hook up the save callback, including our new save_error slot
+                btn_save.click(
+                    save_setup,
+                    inputs=[
+                        course, instr, email,
+                        devices, pdf_file,
+                        sy, sm, sd_day,
+                        ey, em, ed_day,
+                        class_days_selected, students_input_str
+                    ],
+                    outputs=[
+                        output_box,            # 1) generated syllabus
+                        save_error,            # 2) validation errors
+                        btn_save,              # 3) hide Save on success
+                        dummy_btn_1,           # 4
+                        btn_generate_plan,     # 5
+                        btn_edit_syl,          # 6
+                        btn_email_syl,         # 7
+                        btn_edit_plan,         # 8
+                        btn_email_plan,        # 9
+                        syllabus_actions_row,  # 10
+                        plan_buttons_row,      # 11
+                        output_plan_box,       # 12
+                        lesson_plan_setup_message, # 13
+                        course_load_for_plan       # 14 (if you actually only have 13 in save_setup, drop this last one)
+                    ]
+                )
 
             # --- Tab 2: Lesson Plan Management ---
             with gr.TabItem("Lesson Plan Management"):
