@@ -413,18 +413,48 @@ def enable_edit_plan_and_reload(current_course_name_for_plan, current_plan_outpu
 
 # MODIFIED save_setup to handle pdf_filepath_str
 def save_setup(course_name, instr_name, instr_email, devices_cb_group, 
-               pdf_filepath_str, # MODIFIED: This is now a filepath string
+               pdf_filepath_str,  # MODIFIED: This is now a filepath string
                start_year, start_month, start_day, end_year, end_month, end_day,
                class_days_checklist, students_csv_text):
-    
-    num_expected_outputs = 14 # Adjusted for current_course_name_state
+
+    num_expected_outputs = 14  # Adjusted for current_course_name_state
+
     def error_return_tuple(error_message_str):
-        return (gr.update(value=error_message_str, visible=True, interactive=False), gr.update(visible=True), gr.Button.update(visible=True), gr.Button.update(visible=False), gr.Button.update(visible=False), gr.Button.update(visible=False), gr.Button.update(visible=False), gr.Row.update(visible=False), gr.Row.update(visible=False), gr.Textbox.update(value="", visible=False), gr.Markdown.update(visible=True), gr.Textbox.update(value=course_name if course_name else "", visible=False), gr.State.update(value=course_name if course_name else ""))
+        # build a tuple of exactly num_expected_outputs gr.update() outputs
+        outs = [gr.update(value=error_return_message_str, visible=True, interactive=False)]
+        outs += [gr.update(visible=False)] * (num_expected_outputs - 1)
+        return tuple(outs)
+
+    # ─── All‐Fields Required Guard ─────────────────────────────────────────
+    if not all([
+        course_name, instr_name, instr_email, pdf_filepath_str,
+        start_year, start_month, start_day,
+        end_year, end_month, end_day,
+        class_days_checklist, students_csv_text.strip()
+    ]):
+        return error_return_tuple("⚠️ All fields must be filled.")
+    # ────────────────────────────────────────────────────────────────────────
 
     try:
-        required_fields = {"Course Name": course_name, "Instructor Name": instr_name, "Instructor Email": instr_email, "PDF Material": pdf_filepath_str, "Start Year": start_year, "Start Month": start_month, "Start Day": start_day, "End Year": end_year, "End Month": end_month, "End Day": end_day, "Class Days": class_days_checklist}
+        required_fields = {
+            "Course Name": course_name,
+            "Instructor Name": instr_name,
+            "Instructor Email": instr_email,
+            "PDF Material": pdf_filepath_str,
+            "Start Year": start_year,
+            "Start Month": start_month,
+            "Start Day": start_day,
+            "End Year": end_year,
+            "End Month": end_month,
+            "End Day": end_day,
+            "Class Days": class_days_checklist
+        }
         missing = [name for name, val in required_fields.items() if not val]
-        if missing: return error_return_tuple(f"⚠️ Error: Required fields missing: {', '.join(missing)}.")
+        if missing:
+            return error_return_tuple(f"⚠️ Required fields missing: {', '.join(missing)}.")
+        # … rest of your save_setup logic follows …
+    except Exception as e:
+        return error_return_tuple(f"⚠️ Unexpected error: {e}")
 
         try:
             start_dt_obj, end_dt_obj = datetime(int(start_year), int(start_month), int(start_day)).date(), datetime(int(end_year), int(end_month), int(end_day)).date()
