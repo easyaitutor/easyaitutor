@@ -387,15 +387,27 @@ def save_setup(course_name, instr_name, instr_email, devices_cb_group,
                end_year, end_month, end_day,
                class_days_checklist, students_csv_text):
     num_out = 14
+
     def error_tuple(msg):
-        outs = [gr.update(value=msg, visible=True, interactive=False)]
-        outs += [gr.update(visible=False)]*(num_out-1)
+        # 0) Hide the syllabus output box
+        # 1) Show the inline error message
+        # 2) Keep the Save button visible
+        # 3…13) Hide all other components
+        outs = [
+            gr.update(visible=False),        # output_box
+            gr.update(value=msg, visible=True, interactive=False),  # save_error
+            gr.update(visible=True)          # btn_save
+        ]
+        outs += [gr.update(visible=False)] * (num_out - 3)
         return tuple(outs)
-    # validate
-    if not all([course_name, instr_name, instr_email, pdf_filepath_str,
-                start_year, start_month, start_day,
-                end_year, end_month, end_day,
-                class_days_checklist, students_csv_text.strip()]):
+
+    # ─── Validation: all fields required ───────────────────────────────
+    if not all([
+        course_name, instr_name, instr_email, pdf_filepath_str,
+        start_year, start_month, start_day,
+        end_year, end_month, end_day,
+        class_days_checklist, students_csv_text.strip()
+    ]):
         return error_tuple("⚠️ All fields must be filled.")
     # ────────────────────────────────────────────────────────────────────────
 
