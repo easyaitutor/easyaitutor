@@ -605,7 +605,13 @@ def build_instructor_ui():
     import time  # ensure time is in scope for the send placeholder
     with gr.Blocks(theme=gr.themes.Soft()) as instructor_demo:
         gr.Markdown("## AI Tutor Instructor Panel")
-        with gr.Tabs():
+    with gr.Blocks(theme=gr.themes.Soft()) as instructor_demo:
+    # ─── PRE‐DECLARE DUMMY BUTTONS IN A HIDDEN ROW ──────────────────
+    with gr.Row(visible=False):
+        dummy_btn_1 = gr.Button(visible=False)
+        dummy_btn_2 = gr.Button(visible=False)
+        dummy_btn_3 = gr.Button(visible=False)
+        dummy_btn_4 = gr.Button(visible=False)with gr.Tabs():
             # --- Tab 1: Course Setup & Syllabus ---
             with gr.TabItem("Course Setup & Syllabus"):
                 with gr.Row():
