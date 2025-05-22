@@ -620,8 +620,12 @@ def build_instructor_ui():
                     with gr.Column(scale=1):
                         gr.Markdown("#### Student & Access Details"); allowed_devices_cb_group = gr.CheckboxGroup(["Phone", "PC", "Tablet"], label="Allowed Devices for Tutor", value=["PC", "Tablet"])
                         students_textbox = gr.Textbox(label="Student List (One per line: Name,Email)", lines=5, placeholder="Example One,student.one@example.com\nExample Two,student.two@example.com", info="Enter student names and emails, separated by a comma.")
-                save_setup_button = gr.Button("Save Setup & Generate Syllabus", variant="primary") \
-               .style(full_width=False, width=300)
+                save_setup_button = gr.Button(
+                    "Save Setup & Generate Syllabus",
+                    variant="primary",
+                    full_width=False,   # no longer stretches edge-to-edge
+                    scale=2             # occupies 2 units of width in a Row
+                )
                 syllabus_output_textbox = gr.Textbox(label="Syllabus Output", lines=20, interactive=False, visible=False, show_copy_button=True)
                 with gr.Row(visible=False) as syllabus_actions_row_ui: edit_syllabus_button, email_syllabus_button = gr.Button(value="📝 Edit Syllabus Text"), gr.Button(value="📧 Email Syllabus to All", variant="secondary")
             with gr.TabItem("2. Lesson Plan Management", id="tab_plan"):
