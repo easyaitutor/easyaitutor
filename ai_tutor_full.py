@@ -13,6 +13,8 @@ import jwt
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.templating import Jinja2Templates
+
 
 # --- Load environment variables ---
 dotenv_path = Path(__file__).parent / ".env"
