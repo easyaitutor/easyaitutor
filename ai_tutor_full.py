@@ -1,5 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
+dotenv_path = Path(r"C:\Users\Max\Desktop\AI TUTOR") / ".env"
+load_dotenv(dotenv_path=dotenv_path)
 import os
 import io
 import json
