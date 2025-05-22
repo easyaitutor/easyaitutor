@@ -1,33 +1,56 @@
-import os
-import io
-import json
-import traceback
-import re
 from pathlib import Path
+from dotenv import load_dotenv
+import os, io, json, traceback, re, uuid, random, mimetypes, csv
 from datetime import datetime, timedelta, timezone as dt_timezone
-import uuid
-import random
-import time
-import mimetypes
-import csv # For simple progress logging
-
 import openai
 import gradio as gr
 from docx import Document
 import smtplib
 from email.message import EmailMessage
-
-from fastapi import FastAPI, HTTPException, Request, Depends
-from fastapi.responses import RedirectResponse
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates # For serving the student UI shell
-from fastapi.staticfiles import StaticFiles # If you have static assets for student UI
-
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import RedirectResponse, HTMLResponse
 import jwt
-import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi.middleware.cors import CORSMiddleware
+
+# --- Load environment variables ---
+dotenv_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=dotenv_path)
+
+# --- Configuration ---
+openai.api_key = os.getenv("OPENAI_API_KEY")
+CONFIG_DIR = Path("course_data")
+CONFIG_DIR.mkdir(exist_ok=True)
+PROGRESS_LOG_FILE = CONFIG_DIR / "student_progress_log.csv"
+
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT   = int(os.getenv("SMTP_PORT", 587))
+SMTP_USER   = os.getenv("SMTP_USER")
+SMTP_PASS   = os.getenv("SMTP_PASS")
+SUPPORT_EMAIL_ADDRESS = os.getenv("SUPPORT_EMAIL_ADDRESS", "easyaitutor@gmail.com")
+
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "a-very-secure-secret-key-please-change")
+LINK_VALIDITY_HOURS = int(os.getenv("LINK_VALIDITY_HOURS", 6))
+ALGORITHM = "HS256"
+APP_DOMAIN = os.getenv("APP_DOMAIN", "https://www.easyaitutor.com")
+
+days_map = {"Monday":0, "Tuesday":1, "Wednesday":2, "Thursday":3,
+            "Friday":4, "Saturday":5, "Sunday":6}
+
+STUDENT_TTS_MODEL = "tts-1"
+STUDENT_CHAT_MODEL = "gpt-4o-mini"
+STUDENT_WHISPER_MODEL = "whisper-1"
+STUDENT_DEFAULT_ENGLISH_LEVEL = "B1 (Intermediate)"
+STUDENT_AUDIO_DIR = Path("student_audio_files")
+STUDENT_AUDIO_DIR.mkdir(exist_ok=True)
+STUDENT_BOT_NAME = "Easy AI Tutor"
+STUDENT_ONBOARDING_TURNS = 2
+STUDENT_TEACHING_TURNS_PER_BREAK = 5
+STUDENT_INTEREST_BREAK_TURNS = 1
+STUDENT_QUIZ_AFTER_TURNS = 7
+STUDENT_MAX_SESSION_TURNS = 20
+STUDENT_UI_PATH = "/student_tutor_interface"
 
 # ─── Create FastAPI app & CORS ───────────────────────────────────────────────
 app = FastAPI()
