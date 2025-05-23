@@ -549,59 +549,94 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, 
     except Exception as e: print(f"Error in save_setup: {e}\n{traceback.format_exc()}"); return error_return_tuple(f"⚠️ Error: {e}")
 
 def generate_plan_callback(course_name_from_input):
-    # ... (generate_plan_callback logic as previously defined, including the notification message) ...
+    # Helper for returning errors in the plan tab
     def error_return_for_plan(error_message_str):
-        return (gr.update(value=error_message_str, visible=True, interactive=False), None, None, gr.update(visible=True), None, None, gr.update(visible=False), gr.update(visible=False))
+        return (
+            gr.update(value=error_message_str, visible=True, interactive=False),
+            None,
+            None,
+            gr.update(visible=True),
+            None,
+            None,
+            gr.update(visible=False),
+            gr.update(visible=False)
+        )
+
     try:
-        if not course_name_from_input: return error_return_for_plan("⚠️ Error: Course Name required.")
-        path = CONFIG_DIR / f"{course_name_from_input.replace(' ','_').lower()}_config.json"
-        if not path.exists(): return error_return_for_plan(f"⚠️ Error: Config for '{course_name_from_input}' not found.")
+        # Validate input
+        if not course_name_from_input:
+            return error_return_for_plan("⚠️ Error: Course Name required.")
+
+        # Load existing config
+        path = CONFIG_DIR / f"{course_name_from_input.replace(' ', '_').lower()}_config.json"
+        if not path.exists():
+            return error_return_for_plan(f"⚠️ Error: Config for '{course_name_from_input}' not found.")
         cfg = json.loads(path.read_text(encoding="utf-8"))
+
+        # Generate the formatted plan + structured lessons
         formatted_plan_str, structured_lessons_list = generate_plan_by_week_structured_and_formatted(cfg)
-        
-        cfg["lessons"] = structured_lessons_list 
+
+        # Update config
+        cfg["lessons"] = structured_lessons_list
         cfg["lesson_plan_formatted"] = formatted_plan_str
+
+        # Write config back to disk
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-@@ def generate_plan_callback(course_name_from_input):
--       path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-+       path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-+
-+       # ─── If the first lesson is today, email each student right now ───
-+       from datetime import date
-+       today = date.today().isoformat()
-+       # structured_lessons_list is in cfg["lessons"]
-+       first = cfg["lessons"][0] if cfg["lessons"] else None
-+       if first and first["date"] == today:
-+           for stu in cfg["students"]:
-+               token = generate_access_token(
-+                   student_id=stu["id"],
-+                   course_id=course_name_from_input.replace(" ", "_").lower(),
-+                   lesson_id=first["lesson_number"],
-+                   lesson_date_obj=first["date"]
-+               )
-+               link = f"{APP_DOMAIN}/class?token={token}"
-+               html = f"""
-+               <p>Hi {stu['name']},</p>
-+               <p>Your course <strong>{cfg['course_name']}</strong> starts today!<br>
-+               Join here: <a href="{link}">{link}</a></p>
-+               """
-+               send_email_notification(
-+                   to_email=stu["email"],
-+                   subject=f"{cfg['course_name']} — Your Class Link for Today",
-+                   html_content=html
-+               )
 
+        # ─── If the first lesson is today, email each student right now ───
+        from datetime import date
+        today = date.today().isoformat()
+        first_lesson = cfg["lessons"][0] if cfg["lessons"] else None
 
-        class_days_str = ", ".join(cfg.get("class_days", ["configured schedule"])) 
-        notification_message = (f"\n\n---\n✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
+        if first_lesson and first_lesson["date"] == today:
+            for stu in cfg["students"]:
+                token = generate_access_token(
+                    student_id=stu["id"],
+                    course_id=course_name_from_input.replace(" ", "_").lower(),
+                    lesson_id=first_lesson["lesson_number"],
+                    lesson_date_obj=first_lesson["date"]
+                )
+                link = f"{APP_DOMAIN}/class?token={token}"
+                html = f"""
+                <p>Hi {stu['name']},</p>
+                <p>Your course <strong>{cfg['course_name']}</strong> starts today!<br>
+                Join here: <a href="{link}">{link}</a></p>
+                """
+                send_email_notification(
+                    to_email=stu["email"],
+                    subject=f"{cfg['course_name']} — Your Class Link for Today",
+                    html_content=html
+                )
+        # ────────────────────────────────────────────────────────────────
+
+        # Build the user‐facing notification in the plan box
+        class_days_str = ", ".join(cfg.get("class_days", ["configured schedule"]))
+        notification_message = (
+            "\n\n---\n✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
             f"Students in this course will now receive emails with a unique link "
             f"to their AI Tutor lesson on each scheduled class day ({class_days_str}). "
-            f"Links are active from 6 AM to 12 PM UTC on those days.")
+            "Links are active from 6 AM to 12 PM UTC on those days."
+        )
         display_text_for_plan_box = formatted_plan_str + notification_message
-        
-        return (gr.update(value=display_text_for_plan_box, visible=True, interactive=False), None, None, gr.update(visible=False), None, None, gr.update(visible=True), gr.update(visible=True)) 
-    except openai.APIError as oai_err: print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}"); return error_return_for_plan(f"⚠️ OpenAI API Error: {oai_err}.")
-    except Exception as e: print(f"Error in generate_plan_callback: {e}\n{traceback.format_exc()}"); return error_return_for_plan(f"⚠️ Error: {e}")
+
+        return (
+            gr.update(value=display_text_for_plan_box, visible=True, interactive=False),
+            None,
+            None,
+            gr.update(visible=False),
+            None,
+            None,
+            gr.update(visible=True),
+            gr.update(visible=True),
+        )
+
+    except openai.APIError as oai_err:
+        print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}")
+        return error_return_for_plan(f"⚠️ OpenAI API Error: {oai_err}.")
+    except Exception as e:
+        print(f"Error in generate_plan_callback: {e}\n{traceback.format_exc()}")
+        return error_return_for_plan(f"⚠️ Error: {e}")
+
 
 def email_document_callback(course_name, doc_type, output_text_content, students_input_str):
     # ... (email_document_callback logic as previously defined, with refined SMTP error handling) ...
