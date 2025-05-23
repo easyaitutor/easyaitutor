@@ -196,7 +196,7 @@ def generate_access_token(student_id, course_id, lesson_id, lesson_date_obj=None
     """
     now = datetime.now(dt_timezone.utc)
     exp = now + timedelta(hours=LINK_VALIDITY_HOURS)
-    payload = {"sub": student_id, "course_id": course_id, "lesson_id": lesson_id, "iat": iat, "exp": exp, "aud": "https://www.easyaitutor.com"} # Assuming this is the intended audience
+    payload = {"sub": student_id, "course_id": course_id, "lesson_id": lesson_id, "iat": now, "exp": exp, "aud": "https://www.easyaitutor.com"} # Assuming this is the intended audience
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
 def generate_5_digit_code(): return str(random.randint(10000, 99999))
