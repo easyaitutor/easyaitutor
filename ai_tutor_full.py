@@ -190,11 +190,12 @@ def count_classes(sd, ed, wdays):
         cur += timedelta(days=1)
     return cnt
     
-def generate_access_token(student_id, course_id, lesson_id, lesson_date_obj):
-    # ... (generate_access_token logic remains the same) ...
-    if isinstance(lesson_date_obj, str): lesson_date_obj = datetime.strptime(lesson_date_obj, '%Y-%m-%d').date()
-    iat = datetime.combine(lesson_date_obj, datetime.min.time(), tzinfo=dt_timezone.utc).replace(hour=6)
-    exp = iat + timedelta(hours=LINK_VALIDITY_HOURS)
+def generate_access_token(student_id, course_id, lesson_id, lesson_date_obj=None):
+    """
+    Creates a JWT that expires LINK_VALIDITY_HOURS from the moment it's generated.
+    """
+    now = datetime.now(dt_timezone.utc)
+    exp = now + timedelta(hours=LINK_VALIDITY_HOURS)
     payload = {"sub": student_id, "course_id": course_id, "lesson_id": lesson_id, "iat": iat, "exp": exp, "aud": "https://www.easyaitutor.com"} # Assuming this is the intended audience
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM)
 
