@@ -549,7 +549,7 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, 
     except Exception as e: print(f"Error in save_setup: {e}\n{traceback.format_exc()}"); return error_return_tuple(f"⚠️ Error: {e}")
 
 def generate_plan_callback(course_name_from_input):
-    # Helper to return errors into your Gradio UI
+    # helper to push errors back into your Gradio UI
     def error_return_for_plan(error_message_str):
         return (
             gr.update(value=error_message_str, visible=True, interactive=False),
@@ -561,7 +561,7 @@ def generate_plan_callback(course_name_from_input):
         )
 
     try:
-        # 1) Basic validation & load
+        # 1) Validate input & load config
         if not course_name_from_input:
             return error_return_for_plan("⚠️ Error: Course Name required.")
 
@@ -571,7 +571,7 @@ def generate_plan_callback(course_name_from_input):
 
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
 
-        # 2) Re-generate plan as before
+        # 2) Generate the new lesson plan
         formatted_plan_str, structured_lessons_list = generate_plan_by_week_structured_and_formatted(cfg)
         cfg["lessons"] = structured_lessons_list
         cfg["lesson_plan_formatted"] = formatted_plan_str
@@ -579,52 +579,53 @@ def generate_plan_callback(course_name_from_input):
         # 3) Save updated config
         config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        # ─── If the very first lesson is TODAY, fire off an immediate email ───
+        # ─── If the first lesson is TODAY, send each student an email now ───
         from datetime import date
         today = date.today().isoformat()
         first = cfg["lessons"][0] if cfg["lessons"] else None
 
         if first and first["date"] == today:
             for stu in cfg["students"]:
-                # generate a fresh token valid LINK_VALIDITY_HOURS from *now*
+                # generate a fresh, valid token (this defines its own iat & exp)
                 token = generate_access_token(
                     student_id=stu["id"],
                     course_id=course_name_from_input.replace(" ", "_").lower(),
                     lesson_id=first["lesson_number"],
+                    lesson_date_obj=first["date"]
                 )
 
-                # build link + code
-                link = f"{APP_DOMAIN}/class?token={token}"
+                # generate a one‐time 5-digit code
                 class_code = generate_5_digit_code()
 
-                # email HTML
+                # build your link + HTML
+                link = f"{APP_DOMAIN}/class?token={token}"
                 html = f"""
                 <html>
-                  <body style="font-family: sans-serif; line-height: 1.5;">
+                  <body style="font-family: sans-serif; line-height:1.5">
                     <p>Hi {stu['name']},</p>
                     <p>Your course <strong>{cfg['course_name']}</strong> starts <strong>today</strong>!</p>
-                    <p>Access your lesson here: <a href="{link}">{link}</a></p>
+                    <p>Click here to join: <a href="{link}">{link}</a></p>
                     <p>5-digit code: <strong>{class_code}</strong></p>
-                    <p>This link & code are valid for the next {LINK_VALIDITY_HOURS} hours.</p>
-                    <p>Good luck and enjoy!</p>
+                    <p>Valid for the next {LINK_VALIDITY_HOURS} hours (6 AM–12 PM UTC).</p>
+                    <p>Good luck!</p>
                   </body>
                 </html>
                 """
 
                 send_email_notification(
                     to_email=stu["email"],
-                    subject=f"Today's Class Link for {cfg['course_name']}: {first['topic_summary']}",
+                    subject=f"{cfg['course_name']} — Your Class Link for Today",
                     html_content=html
                 )
-        # ──────────────────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
 
-        # 4) Build your normal Gradio response
+        # 4) Return your normal “plan generated” message
         class_days_str = ", ".join(cfg.get("class_days", ["configured schedule"]))
         notification_message = (
-            f"\n\n---\n"
-            f"✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
-            f"Students will now get a unique link on each scheduled day "
-            f"({class_days_str}), valid 6 AM–12 PM UTC."
+            "\n\n---\n"
+            "✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
+            f"Students will now receive a unique link on each scheduled day ({class_days_str}), "
+            "valid 6 AM–12 PM UTC."
         )
         display_text_for_plan_box = formatted_plan_str + notification_message
 
