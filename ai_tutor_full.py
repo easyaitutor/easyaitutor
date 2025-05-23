@@ -1,12 +1,13 @@
 from pathlib import Path
 from dotenv import load_dotenv
 import os, io, json, traceback, re, uuid, random, mimetypes, csv
-from datetime import datetime, timedelta, timezone as dt_timezone
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 import openai
 import gradio as gr
 from docx import Document
 import smtplib
 from email.message import EmailMessage
+from your_email_module import send_email_notification, generate_access_token
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
 import jwt
@@ -561,6 +562,35 @@ def generate_plan_callback(course_name_from_input):
         cfg["lessons"] = structured_lessons_list 
         cfg["lesson_plan_formatted"] = formatted_plan_str
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+@@ def generate_plan_callback(course_name_from_input):
+-       path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
++       path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
++
++       # ─── If the first lesson is today, email each student right now ───
++       from datetime import date
++       today = date.today().isoformat()
++       # structured_lessons_list is in cfg["lessons"]
++       first = cfg["lessons"][0] if cfg["lessons"] else None
++       if first and first["date"] == today:
++           for stu in cfg["students"]:
++               token = generate_access_token(
++                   student_id=stu["id"],
++                   course_id=course_name_from_input.replace(" ", "_").lower(),
++                   lesson_id=first["lesson_number"],
++                   lesson_date_obj=first["date"]
++               )
++               link = f"{APP_DOMAIN}/class?token={token}"
++               html = f"""
++               <p>Hi {stu['name']},</p>
++               <p>Your course <strong>{cfg['course_name']}</strong> starts today!<br>
++               Join here: <a href="{link}">{link}</a></p>
++               """
++               send_email_notification(
++                   to_email=stu["email"],
++                   subject=f"{cfg['course_name']} — Your Class Link for Today",
++                   html_content=html
++               )
+
 
         class_days_str = ", ".join(cfg.get("class_days", ["configured schedule"])) 
         notification_message = (f"\n\n---\n✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
