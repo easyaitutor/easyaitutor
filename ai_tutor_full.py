@@ -590,23 +590,34 @@ def generate_plan_callback(course_name_from_input):
 
         if first_lesson and first_lesson["date"] == today:
             for stu in cfg["students"]:
-                token = generate_access_token(
-                    student_id=stu["id"],
-                    course_id=course_name_from_input.replace(" ", "_").lower(),
-                    lesson_id=first_lesson["lesson_number"],
-                    lesson_date_obj=first_lesson["date"]
-                )
-                link = f"{APP_DOMAIN}/class?token={token}"
-                html = f"""
+            # 1) token + link
+            token = generate_access_token(
+                student_id=stu["id"],
+                course_id=course_name_from_input.replace(" ", "_").lower(),
+                lesson_id=first_lesson["lesson_number"]
+            )
+            link = f"{APP_DOMAIN}/class?token={token}"
+
+            # 2) 5-digit code
+            class_code = generate_5_digit_code()
+
+            # 3) build HTML with both
+            html = f"""
+            <html>
+              <body style="font-family:sans-serif">
                 <p>Hi {stu['name']},</p>
-                <p>Your course <strong>{cfg['course_name']}</strong> starts today!<br>
-                Join here: <a href="{link}">{link}</a></p>
-                """
-                send_email_notification(
-                    to_email=stu["email"],
-                    subject=f"{cfg['course_name']} — Your Class Link for Today",
-                    html_content=html
-                )
+                <p>Your course <strong>{cfg['course_name']}</strong> starts today!</p>
+                <p>Access link: <a href="{link}">{link}</a></p>
+                <p>5-digit code: <strong>{class_code}</strong></p>
+                <p>This code and link are valid for the next {LINK_VALIDITY_HOURS} hours.</p>
+              </body>
+            </html>
+            """
+            send_email_notification(
+                to_email=stu["email"],
+                subject=f"Today's Class Link for {cfg['course_name']}: {first_lesson['topic_summary']}",
+                html_content=html
+            )
         # ────────────────────────────────────────────────────────────────
 
         # Build the user‐facing notification in the plan box
