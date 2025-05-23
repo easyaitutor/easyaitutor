@@ -7,7 +7,6 @@ import gradio as gr
 from docx import Document
 import smtplib
 from email.message import EmailMessage
-from your_email_module import send_email_notification, generate_access_token
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
 import jwt
