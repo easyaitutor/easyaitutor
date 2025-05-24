@@ -1251,12 +1251,6 @@ async def shutdown_event():
 # student_tutor_ui_instance = build_student_tutor_ui( DYNAMIC PARAMS NEEDED HERE )
 # app = gr.mount_gradio_app(app, student_tutor_ui_instance, path="/student_tutor_interface")
 
-# build the student UI once
-student_tutor_ui = build_student_tutor_ui()
-
-# mount it on /student_tutor_interface
-app = gr.mount_gradio_app(app, student_tutor_ui, path=STUDENT_UI_PATH)
-
 if __name__ == "__main__":
     print("Starting App. Instructor Panel at /instructor. Student access via /class?token=...")
     # Note: The student UI part is not fully mounted as a dynamic Gradio app in this simplified __main__.
