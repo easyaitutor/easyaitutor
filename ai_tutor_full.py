@@ -937,6 +937,19 @@ def build_student_tutor_ui(course_id: str, lesson_id: int, student_id: str, less
         return base # Default
 
     with gr.Blocks(theme=gr.themes.Soft()) as student_demo:
+    # 1) Hidden state to hold the JWT
+    token_state = gr.State(None)
+
+    # 2) On-load callback to grab ?token=… from the URL
+    def grab_token_from_query(request: gr.Request):
+        return request.query_params.get("token")
+
+    # 3) Wire it up so token_state is populated on page load
+    student_demo.load(
+        fn=grab_token_from_query,
+        inputs=[],
+        outputs=[token_state]
+    )
         gr.Markdown(f"# {STUDENT_BOT_NAME} - Lesson: {lesson_topic}")
         gr.Markdown(f"Course ID: {course_id}, Lesson ID: {lesson_id}, Student ID: {student_id}") # For debug
 
@@ -1118,14 +1131,19 @@ def build_student_tutor_ui(course_id: str, lesson_id: int, student_id: str, less
         )
     return student_demo
 
+# Build the Blocks app (no .launch() here):
+student_ui = build_student_tutor_ui()
+
+# Mount it under /student_interface:
+app = gr.mount_gradio_app(app, student_ui, path="/student_interface")
+
 # Templates for serving the initial HTML for the student tutor
 templates = Jinja2Templates(directory="templates") # Create a 'templates' directory
 # You might need to serve static files if your student UI has CSS/JS not handled by Gradio
 # app.mount("/static_student", StaticFiles(directory="static_student"), name="static_student")
 
-
 @app.get("/class", response_class=HTMLResponse)
-async def get_student_lesson_page(request: Request, token: str = None):
+def get_student_lesson_page(token: str = None):
     """
     Serves the initial HTML page that will then load the Gradio student tutor UI.
     Validates token and prepares lesson context.
@@ -1136,7 +1154,7 @@ async def get_student_lesson_page(request: Request, token: str = None):
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience="https://www.easyaitutor.com")
         student_id = payload["sub"]
         course_id = payload["course_id"]
-        lesson_id = int(payload["lesson_id"]) # Ensure it's an int
+        lesson_id = int(payload["lesson_id"])  # Ensure it's an int
         # Expiration is checked by jwt.decode automatically
 
         # Load course config
@@ -1152,7 +1170,7 @@ async def get_student_lesson_page(request: Request, token: str = None):
             raise HTTPException(status_code=404, detail="Lesson content or plan not found in configuration.")
 
         if not (0 < lesson_id <= len(lessons_data)):
-             raise HTTPException(status_code=404, detail=f"Lesson ID {lesson_id} out of range.")
+            raise HTTPException(status_code=404, detail=f"Lesson ID {lesson_id} out of range.")
 
         # Get specific lesson topic
         lesson_topic = lessons_data[lesson_id - 1].get("topic_summary", f"Lesson {lesson_id}")
@@ -1168,22 +1186,14 @@ async def get_student_lesson_page(request: Request, token: str = None):
             lesson_segment_text = "(No specific text segment; focusing on general review.)"
             print(f"Warning: Empty text segment for {course_id}, lesson {lesson_id}")
 
-        # ─── Build & return the Gradio student UI inline ───
-        student_ui = build_student_tutor_ui(
-            course_id,
-            lesson_id,
-            student_id,
-            lesson_topic,
-            lesson_segment_text
-        )
-        return HTMLResponse(student_ui.launch(inline=True, share=False))
+        # ─── Redirect into the mounted Gradio student interface ───
+        return RedirectResponse(url=f"/student_interface?token={token}")
 
-            
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Access token has expired.")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid access token.")
-    except HTTPException as e: # Re-raise HTTPExceptions
+    except HTTPException as e:  # Re-raise any HTTPExceptions
         raise e
     except Exception as e:
         print(f"Error processing /class request: {e}\n{traceback.format_exc()}")
