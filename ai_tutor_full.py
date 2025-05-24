@@ -936,32 +936,33 @@ def build_student_tutor_ui(course_id: str, lesson_id: int, student_id: str, less
             return f"{base} The session is ending. Briefly summarize or thank the student."
         return base # Default
 
-    with gr.Blocks(theme=gr.themes.Soft()) as student_demo:
-         # 1) Hidden state to hold the JWT
-         token_state = gr.State(None)
+        with gr.Blocks(theme=gr.themes.Soft()) as student_demo:
+          # 1) Hidden state to hold the JWT
+          token_state = gr.State(None)
 
-         # 2) On-load callback to grab ?token=… from the URL
-         def grab_token_from_query(request: gr.Request):
-         return request.query_params.get("token")
+          # 2) On-load callback to grab ?token=… from the URL
+          def grab_token_from_query(request: gr.Request):
+            return request.query_params.get("token")
 
-         # 3) Wire it up so token_state is populated on page load
-         student_demo.load(
-         fn=grab_token_from_query,
-         inputs=[],
-         outputs=[token_state]
-         )
-        gr.Markdown(f"# {STUDENT_BOT_NAME} - Lesson: {lesson_topic}")
-        gr.Markdown(f"Course ID: {course_id}, Lesson ID: {lesson_id}, Student ID: {student_id}") # For debug
+          # 3) Wire it up so token_state is populated on page load
+          student_demo.load(
+            fn=grab_token_from_query,
+            inputs=[],
+            outputs=[token_state]
+          )
 
-        # State variables for the student session
-        st_chat_history = gr.State([]) # For LLM context
-        st_display_history = gr.State([]) # For chatbot UI
-        st_student_profile = gr.State({"interests": [], "quiz_score": {"correct": 0, "total": 0}})
-        st_session_mode = gr.State("initial_greeting") # initial_greeting, onboarding, teaching, interest_break, quiz, ending
-        st_turn_count = gr.State(0) # User turns
-        st_teaching_turns_count = gr.State(0) # Teaching turns since last break/quiz
-        st_session_start_time = gr.State(datetime.now(dt_timezone.utc))
+          # — your existing UI components —
+          gr.Markdown(f"# {STUDENT_BOT_NAME} - Lesson: {lesson_topic}")
+          gr.Markdown(f"Course ID: {course_id}, Lesson ID: {lesson_id}, Student ID: {student_id}")
 
+          # State variables for the student session
+          st_chat_history         = gr.State([])  # For LLM context
+          st_display_history      = gr.State([])  # For chatbot UI
+          st_student_profile      = gr.State({"interests": [], "quiz_score": {"correct": 0, "total": 0}})
+          st_session_mode         = gr.State("initial_greeting")  # initial_greeting, onboarding, teaching, interest_break, quiz, ending
+          st_turn_count           = gr.State(0)  # User turns
+          st_teaching_turns_count = gr.State(0)  # Teaching turns since last break/quiz
+          st_session_start_time   = gr.State(datetime.now(dt_timezone.utc))
 
         with gr.Row():
             with gr.Column(scale=1):
