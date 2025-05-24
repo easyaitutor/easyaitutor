@@ -900,7 +900,11 @@ def build_student_tutor_ui():
     def grab_token_from_query(request: gr.Request):
       return request.query_params.get("token")
     # 3) Wire it up so token_state is populated on page load
-    student_demo.load(fn=grab_token_from_query, inputs=[], outputs=[token_state])
+    student_demo.load(
+      fn=grab_token_from_query,
+      inputs=[],
+      outputs=[token_state]
+    )
     # 4) Context states populated after decoding
     course_id_state      = gr.State(None)
     lesson_id_state      = gr.State(None)
@@ -911,7 +915,12 @@ def build_student_tutor_ui():
     def decode_context(token):
       import jwt, json
       from pathlib import Path
-      payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
+      payload = jwt.decode(
+        token,
+        JWT_SECRET_KEY,
+        algorithms=[ALGORITHM],
+        audience=APP_DOMAIN
+      )
       course  = payload["course_id"]
       student = payload["sub"]
       lesson  = int(payload["lesson_id"])
@@ -929,29 +938,42 @@ def build_student_tutor_ui():
     student_demo.load(
       fn=decode_context,
       inputs=[token_state],
-      outputs=[course_id_state, lesson_id_state, student_id_state, lesson_topic_state, lesson_segment_state]
+      outputs=[
+        course_id_state,
+        lesson_id_state,
+        student_id_state,
+        lesson_topic_state,
+        lesson_segment_state
+      ]
     )
     # — your existing UI components —
-    gr.Markdown(lambda t: f"# {STUDENT_BOT_NAME} – Lesson: {t}", inputs=[lesson_topic_state])
-    gr.Markdown(lambda c, l, s: f"Course ID: {c}, Lesson ID: {l}, Student ID: {s}", inputs=[course_id_state, lesson_id_state, student_id_state])
+    gr.Markdown(
+      lambda t: f"# {STUDENT_BOT_NAME} – Lesson: {t}",
+      inputs=[lesson_topic_state]
+    )
+    gr.Markdown(
+      lambda c, l, s: f"Course ID: {c}, Lesson ID: {l}, Student ID: {s}",
+      inputs=[course_id_state, lesson_id_state, student_id_state]
+    )
     # State variables for the student session
-    st_chat_history         = gr.State([])
-    st_display_history      = gr.State([])
+    st_chat_history         = gr.State([])  # For LLM context
+    st_display_history      = gr.State([])  # For chatbot UI
     st_student_profile      = gr.State({"interests": [], "quiz_score": {"correct": 0, "total": 0}})
-    st_session_mode         = gr.State("initial_greeting")
-    st_turn_count           = gr.State(0)
-    st_teaching_turns_count = gr.State(0)
+    st_session_mode         = gr.State("initial_greeting")  # initial_greeting, onboarding, teaching, interest_break, quiz, ending
+    st_turn_count           = gr.State(0)  # User turns
+    st_teaching_turns_count = gr.State(0)  # Teaching turns since last break/quiz
     st_session_start_time   = gr.State(datetime.now(dt_timezone.utc))
     with gr.Row():
       with gr.Column(scale=1):
-        st_voice_dropdown = gr.Dropdown(choices=["nova","shimmer","alloy"], value="nova", label="Tutor Voice")
-        st_mic_input      = gr.Audio(sources=["microphone"], type="filepath", label="Record response:")
-        st_text_input     = gr.Textbox(label="Or type response:", placeholder="Type here...")
-        st_send_button    = gr.Button("Send", variant="primary")
+        st_voice_dropdown = gr.Dropdown(choices=["nova", "shimmer", "alloy"], value="nova", label="Tutor Voice")
+        st_mic_input = gr.Audio(sources=["microphone"], type="filepath", label="Record response:")
+        st_text_input = gr.Textbox(label="Or type response:", placeholder="Type here...")
+        st_send_button = gr.Button("Send", variant="primary")
       with gr.Column(scale=3):
-        st_chatbot   = gr.Chatbot(label=f"Conversation with {STUDENT_BOT_NAME}", height=500)
+        st_chatbot = gr.Chatbot(label=f"Conversation with {STUDENT_BOT_NAME}", height=500)
         st_audio_out = gr.Audio(type="filepath", autoplay=False, label=f"{STUDENT_BOT_NAME} says:")
   return student_demo
+
 
         with gr.Row():
             with gr.Column(scale=1):
