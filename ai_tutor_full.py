@@ -937,19 +937,19 @@ def build_student_tutor_ui(course_id: str, lesson_id: int, student_id: str, less
         return base # Default
 
     with gr.Blocks(theme=gr.themes.Soft()) as student_demo:
-    # 1) Hidden state to hold the JWT
-    token_state = gr.State(None)
+         # 1) Hidden state to hold the JWT
+         token_state = gr.State(None)
 
-    # 2) On-load callback to grab ?token=… from the URL
-    def grab_token_from_query(request: gr.Request):
-        return request.query_params.get("token")
+         # 2) On-load callback to grab ?token=… from the URL
+         def grab_token_from_query(request: gr.Request):
+         return request.query_params.get("token")
 
-    # 3) Wire it up so token_state is populated on page load
-    student_demo.load(
-        fn=grab_token_from_query,
-        inputs=[],
-        outputs=[token_state]
-    )
+         # 3) Wire it up so token_state is populated on page load
+         student_demo.load(
+         fn=grab_token_from_query,
+         inputs=[],
+         outputs=[token_state]
+         )
         gr.Markdown(f"# {STUDENT_BOT_NAME} - Lesson: {lesson_topic}")
         gr.Markdown(f"Course ID: {course_id}, Lesson ID: {lesson_id}, Student ID: {student_id}") # For debug
 
