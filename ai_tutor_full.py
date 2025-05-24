@@ -1158,80 +1158,27 @@ async def get_student_lesson_page(request: Request, token: str = None):
         lesson_topic = lessons_data[lesson_id - 1].get("topic_summary", f"Lesson {lesson_id}")
 
         # Calculate text segment for this lesson
-        num_total_lessons = len(cfg.get("class_dates", lessons_data)) # Use class_dates if available, else len(lessons)
-        if num_total_lessons == 0: num_total_lessons = 1 # Avoid division by zero
-        
-        chars_per_lesson = len(full_text) // num_total_lessons
-        start_char = (lesson_id - 1) * chars_per_lesson
-        end_char = lesson_id * chars_per_lesson if lesson_id < num_total_lessons else len(full_text)
+        num_total_lessons = len(cfg.get("class_dates", lessons_data)) or len(lessons_data)
+        chars_per_lesson  = len(full_text) // num_total_lessons
+        start_char        = (lesson_id - 1) * chars_per_lesson
+        end_char          = lesson_id * chars_per_lesson if lesson_id < num_total_lessons else len(full_text)
         lesson_segment_text = full_text[start_char:end_char].strip()
 
         if not lesson_segment_text:
-            lesson_segment_text = "(No specific text segment for this lesson, focusing on general topic review.)"
+            lesson_segment_text = "(No specific text segment; focusing on general review.)"
             print(f"Warning: Empty text segment for {course_id}, lesson {lesson_id}")
 
+        # ─── Build & return the Gradio student UI inline ───
+        student_ui = build_student_tutor_ui(
+            course_id,
+            lesson_id,
+            student_id,
+            lesson_topic,
+            lesson_segment_text
+        )
+        return HTMLResponse(student_ui.launch(inline=True, share=False))
 
-        # This is where you would normally render an HTML page that then loads the Gradio JS
-        # For simplicity with Gradio, we'll mount another Gradio app specifically for the student.
-        # This requires careful handling if many students access it.
-        # A more scalable way is a single student Gradio app whose state is initialized.
-        
-        # We will pass these to the Gradio app for the student.
-        # This is a simplified way; ideally, the Gradio app at /student_tutor_gradio_app
-        # would itself fetch these based on the token via an API or shared context.
-        # For now, we'll pass them conceptually.
-        
-        # The actual Gradio app for the student will be mounted separately.
-        # This HTML response just needs to redirect or embed the Gradio app.
-        # Simplest for now: redirect to the Gradio app path with parameters.
-        # However, Gradio doesn't easily take startup parameters via URL for gr.Blocks.
-        # So, the student Gradio app will need to parse the token from its own request context.
-
-        # For now, let's just return a simple HTML page that tells the user they are being redirected
-        # or that the lesson is loading. The actual Gradio app will be at /student_tutor_interface
-        
-        # This HTML is just a placeholder. The real magic happens when Gradio JS loads for the student UI.
-        # We need to ensure the student_tutor_ui can get the token.
-        # One way: render the token into a JavaScript variable on an HTML page.
-        # Then the Gradio JS for the student UI can pick it up.
-        
-        # Create a simple HTML template (templates/student_view.html)
-        # <!DOCTYPE html>
-        # <html><head><title>Easy AI Tutor Lesson</title></head>
-        # <body>
-        #     <h1>Loading Your Lesson...</h1>
-        #     <script>
-        #         // This token will be used by the Gradio JS when it initializes the student UI
-        #         window.lessonToken = "{{ token }}"; 
-        #         // Redirect or load Gradio JS that points to the student Gradio app mount
-        #         window.location.href = "/student_tutor_interface"; // Or directly embed Gradio JS
-        #     </script>
-        # </body></html>
-        # For now, we will directly mount the student UI and it will have to get the token itself.
-        # This is complex. A simpler Phase 1 might be to pass data via query params to a Gradio app
-        # if Gradio's Blocks API supported easy init with params.
-
-        # Let's assume the student Gradio app is mounted at /student_tutor_interface
-        # and it will handle token extraction from its own request context when it loads.
-        # This HTML is just a conceptual shell.
-        return HTMLResponse(f"""
-            <html>
-                <head><title>Easy AI Tutor Lesson</title></head>
-                <body>
-                    <h2>Preparing your lesson for Course: {course_id}, Lesson: {lesson_id} ({lesson_topic})</h2>
-                    <p>Student ID: {student_id}</p>
-                    <p>If the lesson does not load automatically, please ensure JavaScript is enabled and refresh.</p>
-                    <p>Token (for debug): {token}</p>
-                    <p><a href="/student_tutor_interface?token={token}">Click here to start your lesson if not redirected.</a></p>
-                    <script>
-                        // Optional: auto-redirect
-                        // window.location.href = "/student_tutor_interface?token={token}";
-                    </script>
-                </body>
-            </html>
-        """)
-
-
+            
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Access token has expired.")
     except jwt.InvalidTokenError:
