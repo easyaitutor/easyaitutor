@@ -1222,20 +1222,15 @@ async def get_student_lesson_page(request: Request, token: str = None):
                     <p>Student ID: {student_id}</p>
                     <p>If the lesson does not load automatically, please ensure JavaScript is enabled and refresh.</p>
                     <p>Token (for debug): {token}</p>
-                    
-                    {'''
-                    <!-- This is where the Gradio app for the student would be embedded or linked -->
-                    <!-- For a single-page app feel, the Gradio JS for the student UI would initialize here -->
-                    <!-- For now, we will mount a separate Gradio app at /student_tutor_interface -->
                     <p><a href="/student_tutor_interface?token={token}">Click here to start your lesson if not redirected.</a></p>
                     <script>
                         // Optional: auto-redirect
                         // window.location.href = "/student_tutor_interface?token={token}";
                     </script>
-                    '''}
                 </body>
             </html>
         """)
+
 
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Access token has expired.")
