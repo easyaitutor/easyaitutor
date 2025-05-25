@@ -972,10 +972,7 @@ def build_student_tutor_ui():
       with gr.Column(scale=3):
         st_chatbot = gr.Chatbot(label=f"Conversation with {STUDENT_BOT_NAME}", height=500)
         st_audio_out = gr.Audio(type="filepath", autoplay=False, label=f"{STUDENT_BOT_NAME} says:")
-  return student_demo
-
-
-        with gr.Row():
+      with gr.Row():
             with gr.Column(scale=1):
                 st_voice_dropdown = gr.Dropdown(choices=["nova", "shimmer", "alloy"], value="nova", label="Tutor Voice")
                 st_mic_input = gr.Audio(sources=["microphone"], type="filepath", label="Record response:")
@@ -984,6 +981,8 @@ def build_student_tutor_ui():
             with gr.Column(scale=3):
                 st_chatbot = gr.Chatbot(label=f"Conversation with {STUDENT_BOT_NAME}", height=500)
                 st_audio_out = gr.Audio(type="filepath", autoplay=False, label=f"{STUDENT_BOT_NAME} says:")
+  
+        return student_demo
 
         def st_initial_load():
             # This function is called when the UI loads for the student.
