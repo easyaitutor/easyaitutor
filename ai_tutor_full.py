@@ -982,7 +982,7 @@ def build_student_tutor_ui():
                 st_chatbot = gr.Chatbot(label=f"Conversation with {STUDENT_BOT_NAME}", height=500)
                 st_audio_out = gr.Audio(type="filepath", autoplay=False, label=f"{STUDENT_BOT_NAME} says:")
   
-        return student_demo
+  return student_demo
 
         def st_initial_load():
             # This function is called when the UI loads for the student.
