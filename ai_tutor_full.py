@@ -894,126 +894,63 @@ def root():
 
 def build_student_tutor_ui():
     with gr.Blocks(theme=gr.themes.Soft()) as student_demo:
-        # 1) Hidden state to hold the JWT
         token_state = gr.State(None)
-        # 2) On-load callback to grab ?token=… from the URL
         def grab_token_from_query(request: gr.Request):
             return request.query_params.get("token")
-        # 3) Wire it up so token_state is populated on page load
-        student_demo.load(
-            fn=grab_token_from_query,
-            inputs=[],
-            outputs=[token_state]
-        )
-        # 4) Context states populated after decoding
-        course_id_state      = gr.State(None)
-        lesson_id_state      = gr.State(None)
-        student_id_state     = gr.State(None)
-        lesson_topic_state   = gr.State(None)
+        student_demo.load(fn=grab_token_from_query, inputs=[], outputs=[token_state])
+        course_id_state = gr.State(None)
+        lesson_id_state = gr.State(None)
+        student_id_state = gr.State(None)
+        lesson_topic_state = gr.State(None)
         lesson_segment_state = gr.State(None)
-        # 5) Decode JWT & load course/lesson context into those states
         def decode_context(token):
             import jwt, json
             from pathlib import Path
-            payload = jwt.decode(
-                token,
-                JWT_SECRET_KEY,
-                algorithms=[ALGORITHM],
-                audience=APP_DOMAIN
-            )
-            course  = payload["course_id"]
+            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
+            course = payload["course_id"]
             student = payload["sub"]
-            lesson  = int(payload["lesson_id"])
+            lesson = int(payload["lesson_id"])
             cfg_path = CONFIG_DIR / f"{course.replace(' ','_').lower()}_config.json"
-            cfg      = json.loads(cfg_path.read_text(encoding="utf-8"))
-            full     = cfg["full_text_content"]
-            lessons  = cfg["lessons"]
-            topic    = lessons[lesson-1]["topic_summary"]
-            total    = len(lessons)
-            chars    = len(full) // total
-            start    = (lesson-1) * chars
-            end      = lesson * chars if lesson < total else len(full)
-            segment  = full[start:end].strip() or "(No specific segment.)"
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            full = cfg["full_text_content"]
+            lessons = cfg["lessons"]
+            topic = lessons[lesson-1]["topic_summary"]
+            total = len(lessons)
+            chars = len(full) // total
+            start = (lesson-1) * chars
+            end = lesson * chars if lesson < total else len(full)
+            segment = full[start:end].strip() or "(No specific segment.)"
             return course, lesson, student, topic, segment
-        student_demo.load(
-            fn=decode_context,
-            inputs=[token_state],
-            outputs=[
-                course_id_state,
-                lesson_id_state,
-                student_id_state,
-                lesson_topic_state,
-                lesson_segment_state
-            ]
-        )
-        # — your existing UI components —
-        gr.Markdown(
-            lambda t: f"# {STUDENT_BOT_NAME} – Lesson: {t}",
-            inputs=[lesson_topic_state]
-        )
-        gr.Markdown(
-            lambda c, l, s: f"Course ID: {c}, Lesson ID: {l}, Student ID: {s}",
-            inputs=[course_id_state, lesson_id_state, student_id_state]
-        )
-        # State variables for the student session
-        st_chat_history         = gr.State([])
-        st_display_history      = gr.State([])
-        st_student_profile      = gr.State({"interests": [], "quiz_score": {"correct": 0, "total": 0}})
-        st_session_mode         = gr.State("initial_greeting")
-        st_turn_count           = gr.State(0)
+        student_demo.load(fn=decode_context, inputs=[token_state], outputs=[course_id_state, lesson_id_state, student_id_state, lesson_topic_state, lesson_segment_state])
+        gr.Markdown(lambda t: f"# {STUDENT_BOT_NAME} – Lesson: {t}", inputs=[lesson_topic_state])
+        gr.Markdown(lambda c, l, s: f"Course ID: {c}, Lesson ID: {l}, Student ID: {s}", inputs=[course_id_state, lesson_id_state, student_id_state])
+        st_chat_history = gr.State([])
+        st_display_history = gr.State([])
+        st_student_profile = gr.State({"interests": [], "quiz_score": {"correct": 0, "total": 0}})
+        st_session_mode = gr.State("initial_greeting")
+        st_turn_count = gr.State(0)
         st_teaching_turns_count = gr.State(0)
-        st_session_start_time   = gr.State(datetime.now(dt_timezone.utc))
-
+        st_session_start_time = gr.State(datetime.now(dt_timezone.utc))
         with gr.Row():
             with gr.Column(scale=1):
-                st_voice_dropdown = gr.Dropdown(
-                    choices=["nova", "shimmer", "alloy"],
-                    value="nova",
-                    label="Tutor Voice"
-                )
-                st_mic_input = gr.Audio(
-                    sources=["microphone"],
-                    type="filepath",
-                    label="Record response:"
-                )
-                st_text_input = gr.Textbox(
-                    label="Or type response:",
-                    placeholder="Type here..."
-                )
+                st_voice_dropdown = gr.Dropdown(choices=["nova", "shimmer", "alloy"], value="nova", label="Tutor Voice")
+                st_mic_input = gr.Audio(sources=["microphone"], type="filepath", label="Record response:")
+                st_text_input = gr.Textbox(label="Or type response:", placeholder="Type here...")
                 st_send_button = gr.Button("Send", variant="primary")
             with gr.Column(scale=3):
-                st_chatbot = gr.Chatbot(
-                    label=f"Conversation with {STUDENT_BOT_NAME}",
-                    height=500
-                )
-                st_audio_out = gr.Audio(
-                    type="filepath",
-                    autoplay=False,
-                    label=f"{STUDENT_BOT_NAME} says:"
-                )
-
-    return student_demo
-
-
-def st_initial_load():
-            # This function is called when the UI loads for the student.
-            # The tutor makes the first statement.
+                st_chatbot = gr.Chatbot(label=f"Conversation with {STUDENT_BOT_NAME}", height=500)
+                st_audio_out = gr.Audio(type="filepath", autoplay=False, label=f"{STUDENT_BOT_NAME} says:")
+        def st_initial_load():
             system_prompt = generate_student_system_prompt("initial_greeting", "", lesson_topic, lesson_segment_text)
             try:
-                client = openai.OpenAI() # Ensure client is initialized
-                llm_response = client.chat.completions.create(
-                    model=STUDENT_CHAT_MODEL,
-                    messages=[{"role": "system", "content": system_prompt}],
-                    max_tokens=150
-                )
+                client = openai.OpenAI()
+                llm_response = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=[{"role": "system", "content": system_prompt}], max_tokens=150)
                 initial_tutor_message = llm_response.choices[0].message.content.strip()
             except Exception as e:
                 print(f"STUDENT_TUTOR: OpenAI initial call failed: {e}")
                 initial_tutor_message = f"Hello! Welcome. We'll be discussing '{lesson_topic}'. Unfortunately, I had a slight hiccup starting up. Let's try our best! What are your hobbies?"
-            
             new_chat_hist = [{"role": "assistant", "content": initial_tutor_message}]
             new_display_hist = [[None, initial_tutor_message]]
-            
             audio_fp_update = None
             try:
                 client = openai.OpenAI()
@@ -1023,86 +960,58 @@ def st_initial_load():
                 audio_fp_update = gr.update(value=str(intro_fp), autoplay=True)
             except Exception as e_tts:
                 print(f"STUDENT_TUTOR: TTS for initial message failed: {e_tts}")
-            
             return new_display_hist, new_chat_hist, "onboarding", 0, 0, audio_fp_update, datetime.now(dt_timezone.utc)
-
-
-        def st_process_turn(mic_audio, typed_text, 
-                            chat_h, display_h, profile, mode, turns, teaching_turns, voice, # States
-                            s_id, c_id, l_id, topic, segment_text): # Fixed lesson context
-            
+        def st_process_turn(mic_audio, typed_text, chat_h, display_h, profile, mode, turns, teaching_turns, voice, s_id, c_id, l_id, topic, segment_text):
             user_input_text = ""
             if mic_audio:
                 try:
                     client = openai.OpenAI()
                     with open(mic_audio, "rb") as af:
                         transcription = client.audio.transcriptions.create(file=af, model=STUDENT_WHISPER_MODEL)
-                    user_input_text = transcription.text.strip()
-                    if not user_input_text: user_input_text = "(No speech detected)"
-                except Exception as e: user_input_text = f"(Transcription error: {e})"
+                    user_input_text = transcription.text.strip() or "(No speech detected)"
+                except Exception as e:
+                    user_input_text = f"(Transcription error: {e})"
                 try: os.remove(mic_audio)
                 except: pass
             elif typed_text:
                 user_input_text = typed_text.strip()
-            else: # Should not happen if triggered by input change/submit
+            else:
                 return display_h, chat_h, profile, mode, turns, teaching_turns, gr.update(), gr.update(value=None), gr.update(value="")
-
-            if not user_input_text: # Handle empty recognized speech
-                 return display_h, chat_h, profile, mode, turns, teaching_turns, gr.update(), gr.update(value=None), gr.update(value="")
-
-
-            display_h.append([user_input_text, None]) # Show user message immediately
+            if not user_input_text:
+                return display_h, chat_h, profile, mode, turns, teaching_turns, gr.update(), gr.update(value=None), gr.update(value="")
+            display_h.append([user_input_text, None])
             chat_h.append({"role": "user", "content": user_input_text})
             turns += 1
-
-            # --- Mode and Turn Logic (Simplified for Phase 1) ---
             next_mode = mode
             if mode == "onboarding":
-                profile["interests"].append(user_input_text) # Simple interest gathering
+                profile["interests"].append(user_input_text)
                 if turns >= STUDENT_ONBOARDING_TURNS: next_mode = "teaching_transition"
             elif mode == "teaching_transition":
                 next_mode = "teaching"
             elif mode == "teaching":
                 teaching_turns += 1
-                if teaching_turns % STUDENT_QUIZ_AFTER_TURNS == 0 and teaching_turns > 0 : # Quiz time
-                    next_mode = "quiz_time"
-                elif teaching_turns % STUDENT_TEACHING_TURNS_PER_BREAK == 0 and teaching_turns > 0: # Interest break
-                    next_mode = "interest_break_transition"
+                if teaching_turns % STUDENT_QUIZ_AFTER_TURNS == 0 and teaching_turns > 0: next_mode = "quiz_time"
+                elif teaching_turns % STUDENT_TEACHING_TURNS_PER_BREAK == 0 and teaching_turns > 0: next_mode = "interest_break_transition"
             elif mode == "interest_break_transition":
                 next_mode = "interest_break_active"
             elif mode == "interest_break_active":
-                next_mode = "teaching" # Back to teaching
-            elif mode == "quiz_time": # After student answers quiz
-                # (Actual quiz answer evaluation would go here)
-                # For now, just assume they answered and move back to teaching
-                # We'll log a placeholder score later
-                profile["quiz_score"]["total"] += 1 # Increment total questions
-                # if answer_is_correct: profile["quiz_score"]["correct"] += 1
                 next_mode = "teaching"
-
-
-            if turns >= STUDENT_MAX_SESSION_TURNS:
-                next_mode = "ending_session"
-
-            # --- Generate Bot Response ---
-            interests_str = ", ".join(profile["interests"]) if profile["interests"] else "not yet known"
+            elif mode == "quiz_time":
+                profile["quiz_score"]["total"] += 1
+                next_mode = "teaching"
+            if turns >= STUDENT_MAX_SESSION_TURNS: next_mode = "ending_session"
+            interests_str = ",".join(profile["interests"]) if profile["interests"] else "not yet known"
             system_prompt = generate_student_system_prompt(next_mode, interests_str, topic, segment_text)
-            
-            bot_response_text = "I'm thinking..."
             try:
                 client = openai.OpenAI()
                 messages_for_llm = [{"role": "system", "content": system_prompt}] + chat_h
-                llm_response = client.chat.completions.create(
-                    model=STUDENT_CHAT_MODEL, messages=messages_for_llm, max_tokens=200
-                )
+                llm_response = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=messages_for_llm, max_tokens=200)
                 bot_response_text = llm_response.choices[0].message.content.strip()
             except Exception as e:
                 print(f"STUDENT_TUTOR: OpenAI chat call failed: {e}")
                 bot_response_text = "I had a little trouble processing that. Could you try rephrasing?"
-
             chat_h.append({"role": "assistant", "content": bot_response_text})
-            display_h[-1][1] = bot_response_text # Update last entry in display history
-
+            display_h[-1][1] = bot_response_text
             audio_fp_update = None
             try:
                 client = openai.OpenAI()
@@ -1112,111 +1021,39 @@ def st_initial_load():
                 audio_fp_update = gr.update(value=str(reply_fp), autoplay=True)
             except Exception as e_tts:
                 print(f"STUDENT_TUTOR: TTS for bot reply failed: {e_tts}")
-
             if next_mode == "ending_session":
-                # Log progress here
-                session_end_time = datetime.now(dt_timezone.utc)
-                # session_duration = (session_end_time - st_session_start_time.value).total_seconds() # Needs st_session_start_time from state
-                # For now, log placeholder duration
                 log_student_progress(s_id, c_id, l_id, f"{profile['quiz_score']['correct']}/{profile['quiz_score']['total']}", 0)
-
-
             return display_h, chat_h, profile, next_mode, turns, teaching_turns, audio_fp_update, gr.update(value=None), gr.update(value="")
-
-        # Load initial message from tutor
-        student_demo.load(
-            fn=st_initial_load, 
-            outputs=[st_chatbot, st_chat_history, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_session_start_time]
-        )
-
-        # Event handlers for student input
-        st_mic_input.change(
-            fn=st_process_turn, 
-            inputs=[st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_voice_dropdown, 
-                    gr.State(student_id), gr.State(course_id), gr.State(lesson_id), gr.State(lesson_topic), gr.State(lesson_segment_text)],
-            outputs=[st_chatbot, st_chat_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_mic_input, st_text_input],
-            show_progress="hidden"
-        )
-        st_text_input.submit(
-            fn=st_process_turn, 
-            inputs=[st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_voice_dropdown,
-                    gr.State(student_id), gr.State(course_id), gr.State(lesson_id), gr.State(lesson_topic), gr.State(lesson_segment_text)],
-            outputs=[st_chatbot, st_chat_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_mic_input, st_text_input],
-            show_progress="hidden"
-        )
-        st_send_button.click(
-            fn=st_process_turn, 
-            inputs=[st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_voice_dropdown,
-                    gr.State(student_id), gr.State(course_id), gr.State(lesson_id), gr.State(lesson_topic), gr.State(lesson_segment_text)],
-            outputs=[st_chatbot, st_chat_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_mic_input, st_text_input],
-            show_progress="hidden"
-        )
+        student_demo.load(fn=st_initial_load, outputs=[st_chatbot, st_chat_history, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_session_start_time])
+        st_mic_input.change(fn=st_process_turn, inputs=[st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_voice_dropdown, gr.State(student_id), gr.State(course_id), gr.State(lesson_id), gr.State(lesson_topic), gr.State(lesson_segment_text)], outputs=[st_chatbot, st_chat_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_mic_input, st_text_input], show_progress="hidden")
+        st_text_input.submit(fn=st_process_turn, inputs=[st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_voice_dropdown, gr.State(student_id), gr.State(course_id), gr.State(lesson_id), gr.State(lesson_topic), gr.State(lesson_segment_text)], outputs=[st_chatbot, st_chat_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_mic_input, st_text_input], show_progress="hidden")
+        st_send_button.click(fn=st_process_turn, inputs=[st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_voice_dropdown, gr.State(student_id), gr.State(course_id), gr.State(lesson_id), gr.State(lesson_topic), gr.State(lesson_segment_text)], outputs=[st_chatbot, st_chat_history, st_student_profile, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_mic_input, st_text_input], show_progress="hidden")
     return student_demo
-
-# Build the Blocks app (no .launch() here):
-student_ui = build_student_tutor_ui()
-
-# Mount it under /student_interface:
-app = gr.mount_gradio_app(app, student_ui, path="/student_interface")
-
-# Templates for serving the initial HTML for the student tutor
-templates = Jinja2Templates(directory="templates") # Create a 'templates' directory
-# You might need to serve static files if your student UI has CSS/JS not handled by Gradio
-# app.mount("/static_student", StaticFiles(directory="static_student"), name="static_student")
-
 @app.get("/class", response_class=HTMLResponse)
-def get_student_lesson_page(token: str = None):
-    """
-    Serves the initial HTML page that will then load the Gradio student tutor UI.
-    Validates token and prepares lesson context.
-    """
-    if not token:
-        return HTMLResponse("<h3>Error: Access token missing.</h3>", status_code=400)
+def get_student_lesson_page(token: str=None):
+    if not token: return HTMLResponse("<h3>Error: Access token missing.</h3>", status_code=400)
     try:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience="https://www.easyaitutor.com")
         student_id = payload["sub"]
         course_id = payload["course_id"]
-        lesson_id = int(payload["lesson_id"])  # Ensure it's an int
-        # Expiration is checked by jwt.decode automatically
-
-        # Load course config
+        lesson_id = int(payload["lesson_id"])
         config_path = CONFIG_DIR / f"{course_id.replace(' ','_').lower()}_config.json"
-        if not config_path.exists():
-            raise HTTPException(status_code=404, detail="Course configuration not found.")
-        
+        if not config_path.exists(): raise HTTPException(status_code=404, detail="Course configuration not found.")
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
-        full_text = cfg.get("full_text_content", "")
-        lessons_data = cfg.get("lessons", [])
-
-        if not full_text or not lessons_data:
-            raise HTTPException(status_code=404, detail="Lesson content or plan not found in configuration.")
-
-        if not (0 < lesson_id <= len(lessons_data)):
-            raise HTTPException(status_code=404, detail=f"Lesson ID {lesson_id} out of range.")
-
-        # Get specific lesson topic
-        lesson_topic = lessons_data[lesson_id - 1].get("topic_summary", f"Lesson {lesson_id}")
-
-        # Calculate text segment for this lesson
+        full_text = cfg.get("full_text_content","")
+        lessons_data = cfg.get("lessons",[])
+        if not full_text or not lessons_data: raise HTTPException(status_code=404, detail="Lesson content or plan not found in configuration.")
+        if not (0<lesson_id<=len(lessons_data)): raise HTTPException(status_code=404, detail=f"Lesson ID {lesson_id} out of range.")
+        lesson_topic = lessons_data[lesson_id-1].get("topic_summary", f"Lesson {lesson_id}")
         num_total_lessons = len(cfg.get("class_dates", lessons_data)) or len(lessons_data)
-        chars_per_lesson  = len(full_text) // num_total_lessons
-        start_char        = (lesson_id - 1) * chars_per_lesson
-        end_char          = lesson_id * chars_per_lesson if lesson_id < num_total_lessons else len(full_text)
-        lesson_segment_text = full_text[start_char:end_char].strip()
-
-        if not lesson_segment_text:
-            lesson_segment_text = "(No specific text segment; focusing on general review.)"
-            print(f"Warning: Empty text segment for {course_id}, lesson {lesson_id}")
-
-        # ─── Redirect into the mounted Gradio student interface ───
+        chars_per_lesson = len(full_text)//num_total_lessons
+        start_char = (lesson_id-1)*chars_per_lesson
+        end_char = lesson_id*chars_per_lesson if lesson_id<num_total_lessons else len(full_text)
+        lesson_segment_text = full_text[start_char:end_char].strip() or "(No specific text segment; focusing on general review.)"
         return RedirectResponse(url=f"/student_interface?token={token}")
-
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Access token has expired.")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid access token.")
-    except HTTPException as e:  # Re-raise any HTTPExceptions
-        raise e
+    except jwt.ExpiredSignatureError: raise HTTPException(status_code=401, detail="Access token has expired.")
+    except jwt.InvalidTokenError: raise HTTPException(status_code=401, detail="Invalid access token.")
+    except HTTPException as e: raise e
     except Exception as e:
         print(f"Error processing /class request: {e}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error preparing lesson: {e}")
