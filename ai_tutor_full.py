@@ -996,35 +996,35 @@ def build_student_tutor_ui():
 
 
 def st_initial_load():
-# This function is called when the UI loads for the student.
-# The tutor makes the first statement.
-system_prompt = generate_student_system_prompt("initial_greeting", "", lesson_topic, lesson_segment_text)
-try:
-    client = openai.OpenAI() # Ensure client is initialized
-    llm_response = client.chat.completions.create(
-        model=STUDENT_CHAT_MODEL,
-        messages=[{"role": "system", "content": system_prompt}],
-        max_tokens=150
-    )
-    initial_tutor_message = llm_response.choices[0].message.content.strip()
-except Exception as e:
-    print(f"STUDENT_TUTOR: OpenAI initial call failed: {e}")
-    initial_tutor_message = f"Hello! Welcome. We'll be discussing '{lesson_topic}'. Unfortunately, I had a slight hiccup starting up. Let's try our best! What are your hobbies?"
-
-new_chat_hist = [{"role": "assistant", "content": initial_tutor_message}]
-new_display_hist = [[None, initial_tutor_message]]
-
-audio_fp_update = None
-try:
-    client = openai.OpenAI()
-    tts_resp = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=initial_tutor_message)
-    intro_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
-    with open(intro_fp, "wb") as f: f.write(tts_resp.content)
-    audio_fp_update = gr.update(value=str(intro_fp), autoplay=True)
-except Exception as e_tts:
-    print(f"STUDENT_TUTOR: TTS for initial message failed: {e_tts}")
-
-return new_display_hist, new_chat_hist, "onboarding", 0, 0, audio_fp_update, datetime.now(dt_timezone.utc)
+            # This function is called when the UI loads for the student.
+            # The tutor makes the first statement.
+            system_prompt = generate_student_system_prompt("initial_greeting", "", lesson_topic, lesson_segment_text)
+            try:
+                client = openai.OpenAI() # Ensure client is initialized
+                llm_response = client.chat.completions.create(
+                    model=STUDENT_CHAT_MODEL,
+                    messages=[{"role": "system", "content": system_prompt}],
+                    max_tokens=150
+                )
+                initial_tutor_message = llm_response.choices[0].message.content.strip()
+            except Exception as e:
+                print(f"STUDENT_TUTOR: OpenAI initial call failed: {e}")
+                initial_tutor_message = f"Hello! Welcome. We'll be discussing '{lesson_topic}'. Unfortunately, I had a slight hiccup starting up. Let's try our best! What are your hobbies?"
+            
+            new_chat_hist = [{"role": "assistant", "content": initial_tutor_message}]
+            new_display_hist = [[None, initial_tutor_message]]
+            
+            audio_fp_update = None
+            try:
+                client = openai.OpenAI()
+                tts_resp = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=initial_tutor_message)
+                intro_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
+                with open(intro_fp, "wb") as f: f.write(tts_resp.content)
+                audio_fp_update = gr.update(value=str(intro_fp), autoplay=True)
+            except Exception as e_tts:
+                print(f"STUDENT_TUTOR: TTS for initial message failed: {e_tts}")
+            
+            return new_display_hist, new_chat_hist, "onboarding", 0, 0, audio_fp_update, datetime.now(dt_timezone.utc)
 
 
         def st_process_turn(mic_audio, typed_text, 
