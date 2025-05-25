@@ -678,64 +678,42 @@ def build_student_tutor_ui():
         lesson_topic_state = gr.State(None)
         lesson_segment_state = gr.State(None) # Holds the text for the current lesson
 
-        # Inside build_student_tutor_ui():
-
         # --- Callback to grab token from URL query parameters ---
         def grab_token_from_query(request: gr.Request):
             token = request.query_params.get("token")
             print(f"STUDENT_UI: Token from query: {token}") # For debugging
             return token
-        student_demo.load(fn=grab_token_from_query, inputs=[], outputs=[token_state]) # Changed None to []
+        student_demo.load(fn=grab_token_from_query, inputs=None, outputs=[token_state]) # Use None for inputs if no explicit Gradio inputs
 
         # --- Callback to decode token and load lesson context ---
         def decode_and_load_context(token_val):
-            # Default error values, to be returned if anything goes wrong
-            default_course_id = "N/A"
-            default_lesson_id = "N/A"
-            default_student_id = "N/A"
-            default_topic = "Error: Initial Setup Failed"
-            default_segment = "Could not load lesson details. Please check the URL or contact support."
-
+            if not token_val:
+                print("STUDENT_UI: Token is None, cannot decode.")
+                return "Unknown Course", "N/A", "Unknown Student", "Error: No Token", "Please ensure you accessed this page via a valid link."
             try:
-                if not token_val:
-                    print("STUDENT_UI: Token is None, cannot decode.")
-                    return default_course_id, default_lesson_id, default_student_id, "Error: No Token Provided", "Access token is missing from the URL. Please use the link from your email."
-
                 payload = jwt.decode(token_val, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
-                course_id = payload.get("course_id", default_course_id)
-                student_id = payload.get("sub", default_student_id)
-                lesson_id_num_str = payload.get("lesson_id")
+                course_id = payload["course_id"]
+                student_id = payload["sub"]
+                lesson_id_num = int(payload["lesson_id"])
 
-                if lesson_id_num_str is None:
-                    return course_id, default_lesson_id, student_id, "Error: Lesson ID Missing in Token", "Lesson information is incomplete in your access token."
-                
-                lesson_id_num = int(lesson_id_num_str) # Can raise ValueError if not int
-
-                cfg_path = CONFIG_DIR / f"{str(course_id).replace(' ','_').lower()}_config.json" # Ensure course_id is str
+                cfg_path = CONFIG_DIR / f"{course_id.replace(' ','_').lower()}_config.json"
                 if not cfg_path.exists():
-                    print(f"STUDENT_UI: Config file not found at {cfg_path}")
-                    return course_id, lesson_id_num, student_id, "Error: Course Configuration Missing", f"The configuration for course '{course_id}' could not be found. Path: {cfg_path}"
+                    return course_id, lesson_id_num, student_id, "Error: Course Config Missing", "Course configuration not found."
 
-                cfg_text = cfg_path.read_text(encoding="utf-8")
-                cfg = json.loads(cfg_text) # Can raise JSONDecodeError
-
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
                 full_text = cfg.get("full_text_content", "")
                 lessons_data = cfg.get("lessons", [])
 
-                if not lessons_data:
-                     return course_id, lesson_id_num, student_id, "Error: No Lessons in Course", f"No lessons are defined in the configuration for course '{course_id}'."
-
                 if not (0 < lesson_id_num <= len(lessons_data)):
-                    return course_id, lesson_id_num, student_id, f"Error: Invalid Lesson ID ({lesson_id_num})", f"Lesson ID {lesson_id_num} is out of range (1-{len(lessons_data)}) for course '{course_id}'."
+                    return course_id, lesson_id_num, student_id, f"Error: Lesson ID {lesson_id_num} Invalid", "Lesson ID is out of range for this course."
 
                 lesson_info = lessons_data[lesson_id_num - 1]
                 topic = lesson_info.get("topic_summary", f"Lesson {lesson_id_num}")
 
+                # Determine lesson segment (simplified logic from /class endpoint)
                 num_total_lessons = len(lessons_data)
-                if not full_text and num_total_lessons > 0 : # If there should be text but isn't
-                    segment = "(Warning: Lesson text content is missing from configuration, but lessons are planned.)"
-                elif num_total_lessons == 0 or not full_text:
-                    segment = "(No specific text segment available for this lesson or course.)"
+                if num_total_lessons == 0 or not full_text:
+                    segment = "(No specific text segment available for this lesson.)"
                 else:
                     chars_per_lesson = len(full_text) // num_total_lessons
                     start_char = (lesson_id_num - 1) * chars_per_lesson
@@ -744,25 +722,14 @@ def build_student_tutor_ui():
                 
                 print(f"STUDENT_UI: Context loaded: C:{course_id} L:{lesson_id_num} S:{student_id} Topic:{topic[:30]}")
                 return course_id, lesson_id_num, student_id, topic, segment
-
             except jwt.ExpiredSignatureError:
-                print("STUDENT_UI: JWT token expired.")
-                return default_course_id, default_lesson_id, default_student_id, "Error: Access Link Expired", "Your session link has expired. Please request a new one if needed."
+                return "N/A", "N/A", "N/A", "Error: Token Expired", "Your session link has expired. Please request a new one if needed."
             except jwt.InvalidTokenError as e:
-                print(f"STUDENT_UI: Invalid JWT token: {e}")
-                return default_course_id, default_lesson_id, default_student_id, "Error: Invalid Access Link", f"There was a problem with your session link: {e}. Ensure it's copied correctly."
-            except FileNotFoundError as e: # Specifically for cfg_path.read_text if exists() was for a dir, or race condition
-                print(f"STUDENT_UI: Config file not found during read: {e}")
-                return default_course_id, default_lesson_id, default_student_id, "Error: Course File Missing", f"Critical error: Course configuration file disappeared or was a directory. Path: {e.filename}"
-            except json.JSONDecodeError as e:
-                print(f"STUDENT_UI: JSON decode error in config file: {e}")
-                return default_course_id, default_lesson_id, default_student_id, "Error: Corrupt Course Configuration", f"The course configuration file is improperly formatted: {e}"
-            except ValueError as e: # For int(lesson_id_num_str)
-                print(f"STUDENT_UI: ValueError during context load (e.g. bad lesson_id format): {e}")
-                return default_course_id, default_lesson_id, default_student_id, "Error: Invalid Lesson Data in Token", f"Lesson ID in token is not a valid number: {e}"
-            except Exception as e: # Catch-all for any other unexpected error
-                print(f"STUDENT_UI: UNHANDLED Exception in decode_and_load_context: {e}\n{traceback.format_exc()}")
-                return default_course_id, default_lesson_id, default_student_id, "Error: Unexpected System Error", f"An unexpected error occurred while preparing your lesson: {e}. Please try again or contact support."
+                print(f"STUDENT_UI: Invalid token error: {e}")
+                return "N/A", "N/A", "N/A", "Error: Invalid Token", f"There was an issue with your session link: {e}"
+            except Exception as e:
+                print(f"STUDENT_UI: Error decoding token or loading context: {e}\n{traceback.format_exc()}")
+                return "N/A", "N/A", "N/A", "Error: Setup Problem", f"Could not prepare lesson: {e}"
 
         student_demo.load(fn=decode_and_load_context, inputs=[token_state], outputs=[course_id_state, lesson_id_state, student_id_state, lesson_topic_state, lesson_segment_state])
 
