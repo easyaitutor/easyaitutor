@@ -282,6 +282,21 @@ def generate_plan_by_week_structured_and_formatted(cfg):
         formatted_lines.append('')
     return "\n".join(formatted_lines), structured_lessons
 
+def generate_access_token(student_id, course_id, lesson_id, lesson_date_obj=None):
+    access_code = generate_5_digit_code()  # Add this
+    now = datetime.now(dt_timezone.utc)
+    exp = now + timedelta(hours=LINK_VALIDITY_HOURS)
+    payload = {
+        "sub": student_id,
+        "course_id": course_id,
+        "lesson_id": lesson_id,
+        "code": access_code,  # Include access code in the token payload
+        "iat": now,
+        "exp": exp,
+        "aud": APP_DOMAIN
+    }
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM), access_code
+
 def send_daily_class_reminders():
     print(f"SCHEDULER: Running daily class reminder job at {datetime.now(dt_timezone.utc)}")
     today_utc = datetime.now(dt_timezone.utc).date()
@@ -298,16 +313,17 @@ def send_daily_class_reminders():
                     for student in cfg["students"]:
                         student_id, student_email, student_name = student.get("id", "unknown"), student.get("email"), student.get("name", "Student")
                         if not student_email: continue
-                        token = generate_access_token(student_id, course_id, lesson["lesson_number"], lesson_date)
-                        access_link = f"{APP_DOMAIN}/class?token={token}" # Corrected link
+                        token, access_code = generate_access_token(student_id, course_id, lesson["lesson_number"], lesson_date)
+                        access_link = f"{APP_DOMAIN}/verify_access?token={token}"
                         email_subject = f"Today's Class Link for {course_name}: {lesson['topic_summary']}"
                         email_html_body = f"""
                         <html><head><style>body {{font-family: sans-serif;}} strong {{color: #007bff;}} a {{color: #0056b3;}} .container {{padding: 20px; border: 1px solid #ddd; border-radius: 5px;}} .code {{font-size: 1.5em; font-weight: bold; background-color: #f0f0f0; padding: 5px 10px;}}</style></head>
                         <body><div class="container">
                             <p>Hi {student_name},</p>
                             <p>Your class for <strong>{course_name}</strong> - "{lesson['topic_summary']}" - is today!</p>
+                            <p><strong>Your access code is:</strong> <span class="code">{access_code}</span></p>
                             <p>Access link: <a href="{access_link}">{access_link}</a></p>
-                            <p>The link is valid for {LINK_VALIDITY_HOURS} hours from generation, typically covering morning to early afternoon UTC on {today_utc.strftime('%B %d, %Y')}.</p>
+                            <p>The link and code are valid for {LINK_VALIDITY_HOURS} hours from generation, typically covering morning to early afternoon UTC on {today_utc.strftime('%B %d, %Y')}.</p>
                             <p>Best regards,<br>AI Tutor System</p>
                         </div></body></html>"""
                         send_email_notification(student_email, email_subject, email_html_body, student_name) # from_name should be student_name if you want Reply-To to be student
@@ -753,6 +769,7 @@ def build_student_tutor_ui():
         student_id_state     = gr.State(None)
         lesson_topic_state   = gr.State(None)
         lesson_segment_state = gr.State(None)
+        
 
         # --- Callback to grab token from URL query parameters ---
         def grab_token_from_query(request: gr.Request):
@@ -768,51 +785,62 @@ def build_student_tutor_ui():
 
         # --- Callback to decode token and load lesson context ---
         def decode_and_load_context(token_val):
-            if not token_val:
-                print("STUDENT_UI: Token is None, cannot decode.")
-                return "Unknown Course", "N/A", "Unknown Student", "Error: No Token", "Please ensure you accessed this page via a valid link."
-            try:
-                payload = jwt.decode(token_val, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
-                course_id = payload["course_id"]
-                student_id = payload["sub"]
-                lesson_id_num = int(payload["lesson_id"])
+    if not token_val:
+        print("STUDENT_UI: Token is None, cannot decode.")
+        return "Unknown Course", "N/A", "Unknown Student", "Error: No Token", "Please ensure you accessed this page via a valid link."
 
-                cfg_path = CONFIG_DIR / f"{course_id.replace(' ','_').lower()}_config.json"
-                if not cfg_path.exists():
-                    return course_id, lesson_id_num, student_id, "Error: Course Config Missing", "Course configuration not found."
+    try:
+        payload = jwt.decode(token_val, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
 
-                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-                full_text = cfg.get("full_text_content", "")
-                lessons_data = cfg.get("lessons", [])
+        code_from_token = payload.get("code")
+        code_from_query = gr.Request().query_params.get("code")  # ⬅️ Access query param
 
-                if not (0 < lesson_id_num <= len(lessons_data)):
-                    return course_id, lesson_id_num, student_id, f"Error: Lesson ID {lesson_id_num} Invalid", "Lesson ID is out of range for this course."
+        if code_from_token and code_from_token != code_from_query:
+            print("STUDENT_UI: Access code mismatch.")
+            return "N/A", "N/A", "N/A", "Error: Code Mismatch", "Your access code does not match. Please re-enter it or check your email."
 
-                lesson_info = lessons_data[lesson_id_num - 1]
-                topic = lesson_info.get("topic_summary", f"Lesson {lesson_id_num}")
+        course_id = payload["course_id"]
+        student_id = payload["sub"]
+        lesson_id_num = int(payload["lesson_id"])
 
-                # Determine lesson segment (simplified logic from /class endpoint)
-                num_total_lessons = len(lessons_data)
-                if num_total_lessons == 0 or not full_text:
-                    segment = "(No specific text segment available for this lesson.)"
-                else:
-                    chars_per_lesson = len(full_text) // num_total_lessons
-                    start_char = (lesson_id_num - 1) * chars_per_lesson
-                    end_char = lesson_id_num * chars_per_lesson if lesson_id_num < num_total_lessons else len(full_text)
-                    segment = full_text[start_char:end_char].strip() or "(No specific text segment; focusing on general review.)"
-                
-                print(f"STUDENT_UI: Context loaded: C:{course_id} L:{lesson_id_num} S:{student_id} Topic:{topic[:30]}")
-                return course_id, lesson_id_num, student_id, topic, segment
-            except jwt.ExpiredSignatureError:
-                return "N/A", "N/A", "N/A", "Error: Token Expired", "Your session link has expired. Please request a new one if needed."
-            except jwt.InvalidTokenError as e:
-                print(f"STUDENT_UI: Invalid token error: {e}")
-                return "N/A", "N/A", "N/A", "Error: Invalid Token", f"There was an issue with your session link: {e}"
-            except Exception as e:
-                print(f"STUDENT_UI: Error decoding token or loading context: {e}\n{traceback.format_exc()}")
-                return "N/A", "N/A", "N/A", "Error: Setup Problem", f"Could not prepare lesson: {e}"
+        cfg_path = CONFIG_DIR / f"{course_id.replace(' ','_').lower()}_config.json"
+        if not cfg_path.exists():
+            return course_id, lesson_id_num, student_id, "Error: Course Config Missing", "Course configuration not found."
+
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        full_text = cfg.get("full_text_content", "")
+        lessons_data = cfg.get("lessons", [])
+
+        if not (0 < lesson_id_num <= len(lessons_data)):
+            return course_id, lesson_id_num, student_id, f"Error: Lesson ID {lesson_id_num} Invalid", "Lesson ID is out of range for this course."
+
+        lesson_info = lessons_data[lesson_id_num - 1]
+        topic = lesson_info.get("topic_summary", f"Lesson {lesson_id_num}")
+
+        # Calculate text segment
+        num_total_lessons = len(lessons_data)
+        if num_total_lessons == 0 or not full_text:
+            segment = "(No specific text segment available for this lesson.)"
+        else:
+            chars_per_lesson = len(full_text) // num_total_lessons
+            start_char = (lesson_id_num - 1) * chars_per_lesson
+            end_char = lesson_id_num * chars_per_lesson if lesson_id_num < num_total_lessons else len(full_text)
+            segment = full_text[start_char:end_char].strip() or "(No specific text segment; focusing on general review.)"
+
+        print(f"STUDENT_UI: Context loaded: C:{course_id} L:{lesson_id_num} S:{student_id} Topic:{topic[:30]}")
+        return course_id, lesson_id_num, student_id, topic, segment
+
+    except jwt.ExpiredSignatureError:
+        return "N/A", "N/A", "N/A", "Error: Token Expired", "Your session link has expired. Please request a new one if needed."
+    except jwt.InvalidTokenError as e:
+        print(f"STUDENT_UI: Invalid token error: {e}")
+        return "N/A", "N/A", "N/A", "Error: Invalid Token", f"There was an issue with your session link: {e}"
+    except Exception as e:
+        print(f"STUDENT_UI: Error decoding token or loading context: {e}\n{traceback.format_exc()}")
+        return "N/A", "N/A", "N/A", "Error: Setup Problem", f"Could not prepare lesson: {e}"
 
         student_demo.load(fn=decode_and_load_context, inputs=[token_state], outputs=[course_id_state, lesson_id_state, student_id_state, lesson_topic_state, lesson_segment_state])
+
 
         # --- UI Display ---
         gr.Markdown(lambda t: f"# {STUDENT_BOT_NAME} – Lesson: {t if t else 'Loading...'}", inputs=[lesson_topic_state])
@@ -1007,6 +1035,24 @@ app = gr.mount_gradio_app(app, student_tutor_ui_instance, path=STUDENT_UI_PATH)
 
 
 # Redirect root (/) → /instructor so users just type your domain
+# Verification step before showing student tutor interface
+@app.get("/verify_access", response_class=HTMLResponse)
+async def verify_access(request: Request, token: str = None):
+    if not token:
+        return HTMLResponse("<h3>Error: Missing token. Please use your lesson link.</h3>", status_code=400)
+    return HTMLResponse(f"""
+    <html><head><title>Access Verification</title></head>
+    <body style="font-family:sans-serif; margin:50px;">
+        <h2>Enter Your Access Code</h2>
+        <form method="get" action="/student_tutor_interface/">
+            <input type="hidden" name="token" value="{token}">
+            <input type="text" name="code" placeholder="5-digit code" pattern="\\d{{5}}" required>
+            <button type="submit" style="margin-top:10px;">Continue</button>
+        </form>
+    </body>
+    </html>
+    """)
+
 @app.get("/")
 def root_redirect(): # Renamed to avoid conflict if you define root differently elsewhere
     return RedirectResponse(url="/instructor")
