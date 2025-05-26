@@ -455,37 +455,49 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, 
 
 def generate_plan_callback(course_name_from_input):
     def error_return_for_plan(error_message_str):
-        return (gr.update(value=error_message_str, visible=True, interactive=False), None, None, gr.update(visible=True), None, None, gr.update(visible=False), gr.update(visible=False))
+        return (
+            gr.update(value=error_message_str, visible=True, interactive=False),
+            None, None,
+            gr.update(visible=True),
+            None, None,
+            gr.update(visible=False),
+            gr.update(visible=False),
+        )
+
     try:
-        if not course_name_from_input: return error_return_for_plan("⚠️ Error: Course Name required.")
+        if not course_name_from_input:
+            return error_return_for_plan("⚠️ Error: Course Name required.")
+
         config_path = CONFIG_DIR / f"{course_name_from_input.replace(' ','_').lower()}_config.json"
-        if not config_path.exists(): return error_return_for_plan(f"⚠️ Error: Config for '{course_name_from_input}' not found.")
+        if not config_path.exists():
+            return error_return_for_plan(f"⚠️ Error: Config for '{course_name_from_input}' not found.")
+
+        # Load, generate plan, and persist
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
         formatted_plan_str, structured_lessons_list = generate_plan_by_week_structured_and_formatted(cfg)
         cfg["lessons"] = structured_lessons_list
         cfg["lesson_plan_formatted"] = formatted_plan_str
         config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-        
-            # ——— Send “first‐day” emails if lesson 1 is today ———
+
+        # ——— FIRST‐DAY EMAIL SENDING ———
         today_iso    = date.today().isoformat()
         first_lesson = cfg["lessons"][0] if cfg["lessons"] else None
-    
-        print(f"DEBUG: today_iso={today_iso}, first_lesson_date={first_lesson['date'] if first_lesson else None}")
-    
+        print(f"DEBUG [generate_plan]: today={today_iso}, lesson1 date={first_lesson['date'] if first_lesson else None}")
+
         if first_lesson and first_lesson["date"] == today_iso:
             for student_info in cfg["students"]:
-                # Generate a fresh token for lesson 1
+                # fresh JWT for lesson 1
                 token = generate_access_token(
                     student_info["id"],
                     course_name_from_input.replace(" ", "_").lower(),
                     first_lesson["lesson_number"],
                     datetime.strptime(first_lesson["date"], "%Y-%m-%d").date()
                 )
-    
-                # Point at your /class endpoint so JWT is validated before Gradio
+
+                # point at /class for validation
                 access_link = f"{APP_DOMAIN}/class?token={token}"
-                print(f"DEBUG: Sending first‐day email to {student_info['email']} → {access_link}")
-    
+                print(f"DEBUG [generate_plan] sending email to {student_info['email']} → {access_link}")
+
                 html_body = f"""
                 <html><body style="font-family: sans-serif; line-height:1.5">
                     <p>Hi {student_info['name']},</p>
@@ -495,23 +507,43 @@ def generate_plan_callback(course_name_from_input):
                     <p>Good luck!</p>
                 </body></html>
                 """
-    
-                ok = send_email_notification(
+
+                sent = send_email_notification(
                     student_info["email"],
                     f"{cfg['course_name']} — Your Class Link for Today",
                     html_body
                 )
-                print(f"DEBUG: Email send result for {student_info['email']}: {ok}")
+                print(f"DEBUG [generate_plan] email sent to {student_info['email']}? {sent}")
 
-        
+        # end of “first‐day” block
+        # ——————————————————————————————————————————————
+
+        # Build the “lesson plan generated” message for the UI
         class_days_str = ", ".join(cfg.get("class_days", ["configured schedule"]))
-        notification_message = (f"\n\n---\n✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
-                                f"Students will now receive a unique link on each scheduled day ({class_days_str}), "
-                                f"valid {LINK_VALIDITY_HOURS} hours from generation.")
+        notification_message = (
+            f"\n\n---\n"
+            f"✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
+            f"Students will now receive a unique link on each scheduled day ({class_days_str}), "
+            f"valid {LINK_VALIDITY_HOURS} hours from generation."
+        )
         display_text_for_plan_box = formatted_plan_str + notification_message
-        return (gr.update(value=display_text_for_plan_box, visible=True, interactive=False), None, None, gr.update(visible=False), None, None, gr.update(visible=True), gr.update(visible=True))
-    except openai.APIError as oai_err: print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}"); return error_return_for_plan(f"⚠️ OpenAI API Error: {oai_err}.")
-    except Exception as e: print(f"Error in generate_plan_callback: {e}\n{traceback.format_exc()}"); return error_return_for_plan(f"⚠️ Error: {e}")
+
+        return (
+            gr.update(value=display_text_for_plan_box, visible=True, interactive=False),
+            None, None,
+            gr.update(visible=False),
+            None, None,
+            gr.update(visible=True),
+            gr.update(visible=True),
+        )
+
+    except openai.APIError as oai_err:
+        print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}")
+        return error_return_for_plan(f"⚠️ OpenAI API Error: {oai_err}.")
+    except Exception as e:
+        print(f"Error in generate_plan_callback: {e}\n{traceback.format_exc()}")
+        return error_return_for_plan(f"⚠️ Error: {e}")
+
 
 def email_document_callback(course_name, doc_type, output_text_content, students_input_str):
     if not SMTP_USER or not SMTP_PASS: return gr.update(value="⚠️ Error: SMTP settings not configured.")
