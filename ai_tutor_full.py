@@ -671,24 +671,24 @@ def generate_student_system_prompt(mode, interests, topic, segment_text):
 def build_student_tutor_ui():
     with gr.Blocks(theme=gr.themes.Soft()) as student_demo:
         # --- States for holding token and decoded info ---
-        request_input      = gr.Request()
-        token_state        = gr.State(None)
-        course_id_state    = gr.State(None)
-        lesson_id_state    = gr.State(None)
-        student_id_state   = gr.State(None)
-        lesson_topic_state = gr.State(None)
+        token_state          = gr.State(None)
+        course_id_state      = gr.State(None)
+        lesson_id_state      = gr.State(None)
+        student_id_state     = gr.State(None)
+        lesson_topic_state   = gr.State(None)
         lesson_segment_state = gr.State(None)
 
         # --- Callback to grab token from URL query parameters ---
         def grab_token_from_query(request: gr.Request):
-            tok = request.query_params.get("token")
-            print(f"STUDENT_UI: got token: {tok}")
-            return tok
-        
-        # pass the Request() into your load call
-        student_demo.load(fn=grab_token_from_query,
-                          inputs=[request_input],
-                          outputs=[token_state])
+            token = request.query_params.get("token")
+            print(f"STUDENT_UI: got token: {token}")
+            return token
+
+        # Gradio will automatically inject the FastAPI Request into your callback
+        student_demo.load(
+            fn=grab_token_from_query,
+            outputs=[token_state]
+        )
 
         # --- Callback to decode token and load lesson context ---
         def decode_and_load_context(token_val):
