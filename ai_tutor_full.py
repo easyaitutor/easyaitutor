@@ -769,6 +769,9 @@ def build_student_tutor_ui():
         student_id_state     = gr.State(None)
         lesson_topic_state   = gr.State(None)
         lesson_segment_state = gr.State(None)
+
+        return student_demo
+
         
 
         # --- Callback to grab token from URL query parameters ---
