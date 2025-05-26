@@ -299,7 +299,7 @@ def send_daily_class_reminders():
                         student_id, student_email, student_name = student.get("id", "unknown"), student.get("email"), student.get("name", "Student")
                         if not student_email: continue
                         token = generate_access_token(student_id, course_id, lesson["lesson_number"], lesson_date)
-                        access_link = f"{APP_DOMAIN}{STUDENT_UI_PATH}?token={token}" # Corrected link
+                        access_link = f"{APP_DOMAIN}/class?token={token}" # Corrected link
                         email_subject = f"Today's Class Link for {course_name}: {lesson['topic_summary']}"
                         email_html_body = f"""
                         <html><head><style>body {{font-family: sans-serif;}} strong {{color: #007bff;}} a {{color: #0056b3;}} .container {{padding: 20px; border: 1px solid #ddd; border-radius: 5px;}} .code {{font-size: 1.5em; font-weight: bold; background-color: #f0f0f0; padding: 5px 10px;}}</style></head>
@@ -471,7 +471,7 @@ def generate_plan_callback(course_name_from_input):
         if first_lesson and first_lesson["date"] == today_iso:
             for student_info in cfg["students"]:
                 token = generate_access_token(student_info["id"], course_name_from_input.replace(" ", "_").lower(), first_lesson["lesson_number"], datetime.strptime(first_lesson["date"], '%Y-%m-%d').date())
-                access_link = f"{APP_DOMAIN}{STUDENT_UI_PATH}?token={token}" # Corrected link
+                access_link = f"{APP_DOMAIN}/class?token={token}" # Corrected link
                 html_body = f"""
                 <html><body style="font-family: sans-serif; line-height:1.5">
                     <p>Hi {student_info['name']},</p>
@@ -671,19 +671,24 @@ def generate_student_system_prompt(mode, interests, topic, segment_text):
 def build_student_tutor_ui():
     with gr.Blocks(theme=gr.themes.Soft()) as student_demo:
         # --- States for holding token and decoded info ---
-        token_state = gr.State(None)
-        course_id_state = gr.State(None)
-        lesson_id_state = gr.State(None)
-        student_id_state = gr.State(None)
+        request_input      = gr.Request()
+        token_state        = gr.State(None)
+        course_id_state    = gr.State(None)
+        lesson_id_state    = gr.State(None)
+        student_id_state   = gr.State(None)
         lesson_topic_state = gr.State(None)
-        lesson_segment_state = gr.State(None) # Holds the text for the current lesson
+        lesson_segment_state = gr.State(None)
 
         # --- Callback to grab token from URL query parameters ---
         def grab_token_from_query(request: gr.Request):
-            token = request.query_params.get("token")
-            print(f"STUDENT_UI: Token from query: {token}") # For debugging
-            return token
-        student_demo.load(fn=grab_token_from_query, inputs=None, outputs=[token_state]) # Use None for inputs if no explicit Gradio inputs
+            tok = request.query_params.get("token")
+            print(f"STUDENT_UI: got token: {tok}")
+            return tok
+        
+        # pass the Request() into your load call
+        student_demo.load(fn=grab_token_from_query,
+                          inputs=[request_input],
+                          outputs=[token_state])
 
         # --- Callback to decode token and load lesson context ---
         def decode_and_load_context(token_val):
