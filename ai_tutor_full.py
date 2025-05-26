@@ -466,12 +466,26 @@ def generate_plan_callback(course_name_from_input):
         cfg["lesson_plan_formatted"] = formatted_plan_str
         config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
         
-        today_iso = date.today().isoformat()
+            # ——— Send “first‐day” emails if lesson 1 is today ———
+        today_iso    = date.today().isoformat()
         first_lesson = cfg["lessons"][0] if cfg["lessons"] else None
+    
+        print(f"DEBUG: today_iso={today_iso}, first_lesson_date={first_lesson['date'] if first_lesson else None}")
+    
         if first_lesson and first_lesson["date"] == today_iso:
             for student_info in cfg["students"]:
-                token = generate_access_token(student_info["id"], course_name_from_input.replace(" ", "_").lower(), first_lesson["lesson_number"], datetime.strptime(first_lesson["date"], '%Y-%m-%d').date())
-                access_link = f"{APP_DOMAIN}/class?token={token}" # Corrected link
+                # Generate a fresh token for lesson 1
+                token = generate_access_token(
+                    student_info["id"],
+                    course_name_from_input.replace(" ", "_").lower(),
+                    first_lesson["lesson_number"],
+                    datetime.strptime(first_lesson["date"], "%Y-%m-%d").date()
+                )
+    
+                # Point at your /class endpoint so JWT is validated before Gradio
+                access_link = f"{APP_DOMAIN}/class?token={token}"
+                print(f"DEBUG: Sending first‐day email to {student_info['email']} → {access_link}")
+    
                 html_body = f"""
                 <html><body style="font-family: sans-serif; line-height:1.5">
                     <p>Hi {student_info['name']},</p>
@@ -479,8 +493,16 @@ def generate_plan_callback(course_name_from_input):
                     <p>Click here to join: <a href="{access_link}">{access_link}</a></p>
                     <p>Valid for the next {LINK_VALIDITY_HOURS} hours.</p>
                     <p>Good luck!</p>
-                </body></html>"""
-                send_email_notification(student_info["email"], f"{cfg['course_name']} — Your Class Link for Today", html_body)
+                </body></html>
+                """
+    
+                ok = send_email_notification(
+                    student_info["email"],
+                    f"{cfg['course_name']} — Your Class Link for Today",
+                    html_body
+                )
+                print(f"DEBUG: Email send result for {student_info['email']}: {ok}")
+
         
         class_days_str = ", ".join(cfg.get("class_days", ["configured schedule"]))
         notification_message = (f"\n\n---\n✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
