@@ -770,10 +770,6 @@ def build_student_tutor_ui():
         lesson_topic_state   = gr.State(None)
         lesson_segment_state = gr.State(None)
 
-        return student_demo
-
-        
-
         # --- Callback to grab token from URL query parameters ---
         def grab_token_from_query(request: gr.Request):
             token = request.query_params.get("token")
@@ -786,7 +782,6 @@ def build_student_tutor_ui():
             outputs=[token_state]
         )
 
-        # --- Callback to decode token and load lesson context ---
         # --- Callback to decode token and load lesson context ---
 def decode_and_load_context(token_val, request):
     if not token_val:
