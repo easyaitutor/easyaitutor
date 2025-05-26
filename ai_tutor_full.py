@@ -762,267 +762,195 @@ def generate_student_system_prompt(mode, interests, topic, segment_text):
 # --- Student Tutor UI and Logic ---
 def build_student_tutor_ui():
     with gr.Blocks(theme=gr.themes.Soft()) as student_demo:
-        # --- States for holding token and decoded info ---
+        # --- Persistent states ---
         token_state          = gr.State(None)
         course_id_state      = gr.State(None)
         lesson_id_state      = gr.State(None)
         student_id_state     = gr.State(None)
         lesson_topic_state   = gr.State(None)
         lesson_segment_state = gr.State(None)
+        st_chat_history      = gr.State([])
+        st_display_history   = gr.State([])
+        st_student_profile   = gr.State({"interests": [], "quiz_score": {"correct": 0, "total": 0}, "english_level": STUDENT_DEFAULT_ENGLISH_LEVEL})
+        st_session_mode      = gr.State("initial_greeting")
+        st_turn_count        = gr.State(0)
+        st_teaching_turns    = gr.State(0)
+        st_session_start     = gr.State(None)
 
-        # --- Callback to grab token from URL query parameters ---
-        def grab_token_from_query(request: gr.Request):
-            token = request.query_params.get("token")
-            print(f"STUDENT_UI: got token: {token}")
-            return token
+        # --- UI Header ---
+        gr.Markdown("## Easy AI Tutor - Interactive Lesson")
 
-        # Gradio will automatically inject the FastAPI Request into your callback
-        student_demo.load(
-            fn=grab_token_from_query,
-            outputs=[token_state]
-        )
-
-        # --- Callback to decode token and load lesson context ---
-def decode_and_load_context(token_val, request):
-    if not token_val:
-        print("STUDENT_UI: Token is None, cannot decode.")
-        return "Unknown Course", "N/A", "Unknown Student", "Error: No Token", "Please ensure you accessed this page via a valid link."
-
-    try:
-        payload = jwt.decode(token_val, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
-        code_from_token = payload.get("code")
-        code_from_query = request.query_params.get("code")  # Access query param
-
-        if code_from_token and code_from_token != code_from_query:
-            print("STUDENT_UI: Access code mismatch.")
-            return "N/A", "N/A", "N/A", "Error: Code Mismatch", "Your access code does not match. Please re-enter it or check your email."
-
-        course_id = payload["course_id"]
-        student_id = payload["sub"]
-        lesson_id_num = int(payload["lesson_id"])
-
-        cfg_path = CONFIG_DIR / f"{course_id.replace(' ', '_').lower()}_config.json"
-        if not cfg_path.exists():
-            return course_id, lesson_id_num, student_id, "Error: Course Config Missing", "Course configuration not found."
-
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        full_text = cfg.get("full_text_content", "")
-        lessons_data = cfg.get("lessons", [])
-
-        if not (0 < lesson_id_num <= len(lessons_data)):
-            return course_id, lesson_id_num, student_id, f"Error: Lesson ID {lesson_id_num} Invalid", "Lesson ID is out of range for this course."
-
-        lesson_info = lessons_data[lesson_id_num - 1]
-        topic = lesson_info.get("topic_summary", f"Lesson {lesson_id_num}")
-
-        if not full_text:
-            segment = "(No specific text segment available for this lesson.)"
-        else:
-            chars_per_lesson = len(full_text) // len(lessons_data)
-            start_char = (lesson_id_num - 1) * chars_per_lesson
-            end_char = lesson_id_num * chars_per_lesson if lesson_id_num < len(lessons_data) else len(full_text)
-            segment = full_text[start_char:end_char].strip() or "(No specific text segment; focusing on general review.)"
-
-        print(f"STUDENT_UI: Context loaded: C:{course_id} L:{lesson_id_num} S:{student_id} Topic:{topic[:30]}")
-        return course_id, lesson_id_num, student_id, topic, segment
-
-    except jwt.ExpiredSignatureError:
-        return "N/A", "N/A", "N/A", "Error: Token Expired", "Your session link has expired. Please request a new one if needed."
-    except jwt.InvalidTokenError as e:
-        print(f"STUDENT_UI: Invalid token error: {e}")
-        return "N/A", "N/A", "N/A", "Error: Invalid Token", f"There was an issue with your session link: {e}"
-    except Exception as e:
-        print(f"STUDENT_UI: Error decoding token or loading context: {e}\n{traceback.format_exc()}")
-        return "N/A", "N/A", "N/A", "Error: Setup Problem", f"Could not prepare lesson: {e}"
-
-        student_demo.load(
-            fn=decode_and_load_context,
-            inputs=[token_state, gr.Request()],
-            outputs=[course_id_state, lesson_id_state, student_id_state, lesson_topic_state, lesson_segment_state]
-        )
-
-
-
-        # --- UI Display ---
-        gr.Markdown(lambda t: f"# {STUDENT_BOT_NAME} – Lesson: {t if t else 'Loading...'}", inputs=[lesson_topic_state])
-        # For debugging, you can show these:
-        # gr.Markdown(lambda c, l, s: f"Debug Info: Course ID: {c}, Lesson ID: {l}, Student ID: {s}", inputs=[course_id_state, lesson_id_state, student_id_state])
-
-        st_chat_history = gr.State([]) # For LLM [{role:"user", "content":"..."}, ...]
-        st_display_history = gr.State([]) # For Gradio Chatbot [[user_msg, bot_msg], ...]
-        st_student_profile = gr.State({"interests": [], "quiz_score": {"correct": 0, "total": 0}, "english_level": STUDENT_DEFAULT_ENGLISH_LEVEL})
-        st_session_mode = gr.State("initial_greeting")
-        st_turn_count = gr.State(0) # Total user turns
-        st_teaching_turns_count = gr.State(0) # User turns in "teaching" mode
-        st_session_start_time = gr.State(None) # Will be set on initial load
-
+        # --- Student Input and Output Interface ---
         with gr.Row():
             with gr.Column(scale=1):
                 st_voice_dropdown = gr.Dropdown(choices=["alloy", "echo", "fable", "nova", "onyx", "shimmer"], value="nova", label="Tutor Voice")
-                st_mic_input = gr.Audio(sources=["microphone"], type="filepath", label="Record response:")
-                st_text_input = gr.Textbox(label="Or type response:", placeholder="Type here...")
+                st_mic_input = gr.Audio(sources=["microphone"], type="filepath", label="🎤 Record your answer")
+                st_text_input = gr.Textbox(label="💬 Or type your response", placeholder="Type here...")
                 st_send_button = gr.Button("Send", variant="primary")
             with gr.Column(scale=3):
-                st_chatbot = gr.Chatbot(label=f"Conversation with {STUDENT_BOT_NAME}", height=500, bubble_full_width=False)
-                st_audio_out = gr.Audio(type="filepath", autoplay=False, label=f"{STUDENT_BOT_NAME} says:")
+                st_chatbot = gr.Chatbot(label="Lesson Conversation", height=500, bubble_full_width=False)
+                st_audio_out = gr.Audio(type="filepath", autoplay=True, label="🎧 Tutor’s Voice")
 
-        # --- Initial message from Tutor ---
-        def st_initial_load(current_lesson_topic, current_lesson_segment):
-            if not current_lesson_topic or current_lesson_topic.startswith("Error:") or not current_lesson_segment:
-                # Handle cases where token decoding failed or context is bad
-                error_message = current_lesson_segment if current_lesson_segment and current_lesson_topic.startswith("Error:") else "I'm having trouble starting our lesson. Please check your access link or contact support."
-                return [[None, error_message]], [], "error_state", 0, 0, None, datetime.now(dt_timezone.utc)
+        # --- Extract token from query ---
+        def grab_token(request: gr.Request):
+            return request.query_params.get("token")
 
-            system_prompt = generate_student_system_prompt("initial_greeting", "", current_lesson_topic, current_lesson_segment)
+        student_demo.load(fn=grab_token, inputs=[], outputs=[token_state])
+
+        # --- Decode token and load context ---
+        def decode_context(token, request: gr.Request):
+            if not token:
+                return "Unknown Course", "N/A", "Unknown Student", "Error: No Token", "Please ensure you accessed this page via a valid link."
+
             try:
-                client = openai.OpenAI()
-                llm_response = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=[{"role": "system", "content": system_prompt}], max_tokens=150, temperature=0.7)
-                initial_tutor_message = llm_response.choices[0].message.content.strip()
+                payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
+                code_from_token = payload.get("code")
+                code_from_url = request.query_params.get("code")
+
+                if code_from_token != code_from_url:
+                    return "N/A", "N/A", "N/A", "Error: Code Mismatch", "Access code mismatch. Please recheck the link or code."
+
+                course_id = payload["course_id"]
+                student_id = payload["sub"]
+                lesson_id = int(payload["lesson_id"])
+
+                cfg_path = CONFIG_DIR / f"{course_id}_config.json"
+                if not cfg_path.exists():
+                    return course_id, lesson_id, student_id, "Error: Course Config Missing", "No config file found for this course."
+
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                lessons = cfg.get("lessons", [])
+                full_text = cfg.get("full_text_content", "")
+
+                if lesson_id <= 0 or lesson_id > len(lessons):
+                    return course_id, lesson_id, student_id, "Error: Lesson Invalid", "Lesson ID is out of range."
+
+                lesson = lessons[lesson_id - 1]
+                topic = lesson.get("topic_summary", f"Lesson {lesson_id}")
+
+                chars_per_lesson = len(full_text) // len(lessons) if full_text else 0
+                start = (lesson_id - 1) * chars_per_lesson
+                end = start + chars_per_lesson
+                segment = full_text[start:end].strip() if full_text else "(No content for this lesson)"
+
+                return course_id, lesson_id, student_id, topic, segment
+
+            except jwt.ExpiredSignatureError:
+                return "N/A", "N/A", "N/A", "Error: Expired", "This link has expired."
+            except jwt.InvalidTokenError as e:
+                return "N/A", "N/A", "N/A", "Error: Invalid Token", f"Invalid token: {e}"
             except Exception as e:
-                print(f"STUDENT_TUTOR: OpenAI initial call failed: {e}")
-                initial_tutor_message = f"Hello! Welcome. We'll be discussing '{current_lesson_topic}'. Unfortunately, I had a slight hiccup starting up. Let's try our best! To start, what are some of your hobbies or interests?"
-            
-            new_chat_hist = [{"role": "system", "content": system_prompt}, {"role": "assistant", "content": initial_tutor_message}]
-            new_display_hist = [[None, initial_tutor_message]]
-            
-            audio_fp_update = None
+                return "N/A", "N/A", "N/A", "Error: Unknown", f"Unexpected error: {e}"
+
+        student_demo.load(fn=decode_context, inputs=[token_state, gr.Request()], outputs=[
+            course_id_state, lesson_id_state, student_id_state, lesson_topic_state, lesson_segment_state
+        ])
+
+        # --- Initial tutor message ---
+        def tutor_greeter(topic, segment):
+            prompt = generate_student_system_prompt("initial_greeting", "", topic, segment)
             try:
                 client = openai.OpenAI()
-                tts_resp = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=initial_tutor_message) # Default voice for intro
-                intro_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
-                with open(intro_fp, "wb") as f: f.write(tts_resp.content)
-                audio_fp_update = gr.update(value=str(intro_fp), autoplay=True)
-            except Exception as e_tts:
-                print(f"STUDENT_TUTOR: TTS for initial message failed: {e_tts}")
-            
-            return new_display_hist, new_chat_hist, "onboarding", 0, 0, audio_fp_update, datetime.now(dt_timezone.utc)
+                res = client.chat.completions.create(
+                    model=STUDENT_CHAT_MODEL,
+                    messages=[{"role": "system", "content": prompt}],
+                    max_tokens=150
+                )
+                msg = res.choices[0].message.content.strip()
+            except Exception as e:
+                msg = f"Hi! Let's talk about '{topic}'. What do you already know about it?"
 
-        # This load should trigger after token_state, lesson_topic_state, etc., are populated.
-        student_demo.load(fn=st_initial_load, inputs=[lesson_topic_state, lesson_segment_state], outputs=[st_chatbot, st_chat_history, st_session_mode, st_turn_count, st_teaching_turns_count, st_audio_out, st_session_start_time])
+            # Convert to speech
+            try:
+                client = openai.OpenAI()
+                speech = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg)
+                audio_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
+                with open(audio_fp, "wb") as f:
+                    f.write(speech.content)
+                return [[None, msg]], [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg}], "onboarding", 0, 0, str(audio_fp), datetime.now(dt_timezone.utc)
+            except:
+                return [[None, msg]], [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg}], "onboarding", 0, 0, None, datetime.now(dt_timezone.utc)
 
-        # --- Main turn processing logic ---
-        def st_process_turn(mic_audio_path, typed_text, current_chat_hist, current_display_hist, current_profile, current_mode, current_turns, current_teaching_turns, selected_voice,
-                            # Values from gr.State objects:
-                            s_id_val, c_id_val, l_id_val, topic_val, segment_text_val, session_start_time_val):
-            
-            if current_mode == "error_state": # Prevent interaction if setup failed
-                 current_display_hist.append([typed_text or "(Attempted audio input)", "I'm unable to proceed due to an earlier setup issue."])
-                 return current_display_hist, current_chat_hist, current_profile, current_mode, current_turns, current_teaching_turns, None, gr.update(value=None), gr.update(value="")
+        student_demo.load(fn=tutor_greeter, inputs=[lesson_topic_state, lesson_segment_state], outputs=[
+            st_display_history, st_chat_history, st_session_mode, st_turn_count, st_teaching_turns, st_audio_out, st_session_start
+        ])
 
-            user_input_text = ""
-            if mic_audio_path:
+        # --- Processing student response ---
+        def handle_response(mic_path, text, chat_hist, disp_hist, profile, mode, turns, teaching_turns, voice,
+                            sid, cid, lid, topic, segment, start_time):
+            input_text = text.strip() if text else ""
+            if mic_path:
                 try:
                     client = openai.OpenAI()
-                    with open(mic_audio_path, "rb") as af:
-                        transcription = client.audio.transcriptions.create(file=af, model=STUDENT_WHISPER_MODEL)
-                    user_input_text = transcription.text.strip()
-                    if not user_input_text: user_input_text = "(No speech detected in audio)"
-                except Exception as e:
-                    print(f"STUDENT_TUTOR: Whisper transcription error: {e}")
-                    user_input_text = f"(Audio transcription error. Please try typing.)"
-                finally:
-                    if os.path.exists(mic_audio_path): os.remove(mic_audio_path)
-            elif typed_text:
-                user_input_text = typed_text.strip()
-            
-            if not user_input_text: # No input provided
-                return current_display_hist, current_chat_hist, current_profile, current_mode, current_turns, current_teaching_turns, None, gr.update(value=None), gr.update(value="")
+                    with open(mic_path, "rb") as f:
+                        result = client.audio.transcriptions.create(file=f, model=STUDENT_WHISPER_MODEL)
+                    input_text = result.text.strip()
+                    if os.path.exists(mic_path): os.remove(mic_path)
+                except:
+                    input_text = "(Audio could not be transcribed.)"
 
-            current_display_hist.append([user_input_text, None]) # Add user message to display
-            current_chat_hist.append({"role": "user", "content": user_input_text})
-            
-            current_turns += 1
-            next_mode = current_mode
+            if not input_text:
+                return disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, gr.update(value=None), gr.update(value="")
 
-            # --- Mode transitions ---
-            if current_mode == "onboarding":
-                if "interests" not in current_profile: current_profile["interests"] = []
-                current_profile["interests"].append(user_input_text) # Simple interest gathering
-                if current_turns >= STUDENT_ONBOARDING_TURNS: next_mode = "teaching_transition"
-            elif current_mode == "teaching_transition":
-                next_mode = "teaching"
-            elif current_mode == "teaching":
-                current_teaching_turns += 1
-                if current_teaching_turns > 0 and current_teaching_turns % STUDENT_QUIZ_AFTER_TURNS == 0 :
-                    next_mode = "quiz_time"
-                elif current_teaching_turns > 0 and current_teaching_turns % STUDENT_TEACHING_TURNS_PER_BREAK == 0 :
-                     next_mode = "interest_break_transition"
-            elif current_mode == "interest_break_transition":
-                next_mode = "interest_break_active"
-            elif current_mode == "interest_break_active":
-                 # After one turn in interest break, go back to teaching transition
-                next_mode = "teaching_transition" # Or directly to "teaching"
-            elif current_mode == "quiz_time":
-                # Placeholder: Assume LLM handles quiz marking. For real quiz, more logic needed.
-                # For now, just transition back to teaching.
-                next_mode = "teaching"
-            
-            if current_turns >= STUDENT_MAX_SESSION_TURNS and next_mode != "ending_session":
-                next_mode = "ending_session"
+            disp_hist.append([input_text, None])
+            chat_hist.append({"role": "user", "content": input_text})
 
-            interests_str = ", ".join(current_profile.get("interests", []))
-            system_prompt = generate_student_system_prompt(next_mode, interests_str, topic_val, segment_text_val)
-            
-            # Update system prompt in history if it changed due to mode
-            if not current_chat_hist or current_chat_hist[0]['role'] != 'system' or current_chat_hist[0]['content'] != system_prompt :
-                current_chat_hist = [{"role": "system", "content": system_prompt}] + [m for m in current_chat_hist if m['role'] != 'system']
+            turns += 1
+            if mode == "onboarding":
+                profile["interests"].append(input_text)
+                if turns >= STUDENT_ONBOARDING_TURNS:
+                    mode = "teaching_transition"
+            elif mode == "teaching_transition":
+                mode = "teaching"
+            elif mode == "teaching":
+                teaching_turns += 1
+                if teaching_turns % STUDENT_TEACHING_TURNS_PER_BREAK == 0:
+                    mode = "interest_break_transition"
+            elif mode == "interest_break_transition":
+                mode = "interest_break_active"
+            elif mode == "interest_break_active":
+                mode = "teaching"
+            elif turns >= STUDENT_MAX_SESSION_TURNS:
+                mode = "ending_session"
 
+            prompt = generate_student_system_prompt(mode, ", ".join(profile["interests"]), topic, segment)
+            if chat_hist and chat_hist[0]["role"] != "system":
+                chat_hist.insert(0, {"role": "system", "content": prompt})
 
-            bot_response_text = "I'm thinking..."
             try:
                 client = openai.OpenAI()
-                messages_for_llm = current_chat_hist # System prompt is now first element
-                llm_response = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=messages_for_llm, max_tokens=250, temperature=0.7)
-                bot_response_text = llm_response.choices[0].message.content.strip()
-            except Exception as e:
-                print(f"STUDENT_TUTOR: OpenAI chat call failed: {e}")
-                bot_response_text = "I had a little trouble processing that. Could you try rephrasing or ask something else?"
+                res = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=chat_hist, max_tokens=250)
+                bot_reply = res.choices[0].message.content.strip()
+            except:
+                bot_reply = "Sorry, I didn't understand that. Could you rephrase?"
 
-            current_chat_hist.append({"role": "assistant", "content": bot_response_text})
-            current_display_hist[-1][1] = bot_response_text # Update display with bot response
-            
-            audio_fp_update = None
-            if bot_response_text:
-                try:
-                    client = openai.OpenAI()
-                    tts_resp = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice=selected_voice, input=bot_response_text)
-                    reply_fp = STUDENT_AUDIO_DIR / f"reply_{uuid.uuid4()}.mp3"
-                    with open(reply_fp, "wb") as f: f.write(tts_resp.content)
-                    audio_fp_update = gr.update(value=str(reply_fp), autoplay=True)
-                except Exception as e_tts:
-                    print(f"STUDENT_TUTOR: TTS for bot reply failed: {e_tts}")
+            chat_hist.append({"role": "assistant", "content": bot_reply})
+            disp_hist[-1][1] = bot_reply
 
-            if next_mode == "ending_session":
-                session_end_time = datetime.now(dt_timezone.utc)
-                duration_seconds = 0
-                if session_start_time_val: # Ensure it was set
-                    duration_seconds = (session_end_time - session_start_time_val).total_seconds()
-                
-                # Simple quiz score string for now
-                quiz_score_display = f"{current_profile['quiz_score']['correct']}/{current_profile['quiz_score']['total']}"
-                log_student_progress(s_id_val, c_id_val, l_id_val, quiz_score_display, int(duration_seconds), f"Interests: {interests_str}, Turns: {current_turns}")
-                # UI could show a final message here or disable input.
-            
-            # Clear input fields
-            return current_display_hist, current_chat_hist, current_profile, next_mode, current_turns, current_teaching_turns, audio_fp_update, gr.update(value=None), gr.update(value="")
+            try:
+                speech = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice=voice, input=bot_reply)
+                fp = STUDENT_AUDIO_DIR / f"turn_{uuid.uuid4()}.mp3"
+                with open(fp, "wb") as f:
+                    f.write(speech.content)
+                return disp_hist, chat_hist, profile, mode, turns, teaching_turns, str(fp), gr.update(value=None), gr.update(value="")
+            except:
+                return disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, gr.update(value=None), gr.update(value="")
 
-        # --- Event Handlers ---
         event_inputs = [
             st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile,
-            st_session_mode, st_turn_count, st_teaching_turns_count, st_voice_dropdown,
-            student_id_state, course_id_state, lesson_id_state, lesson_topic_state, lesson_segment_state, st_session_start_time
+            st_session_mode, st_turn_count, st_teaching_turns, st_voice_dropdown,
+            student_id_state, course_id_state, lesson_id_state, lesson_topic_state, lesson_segment_state, st_session_start
         ]
         event_outputs = [
             st_chatbot, st_chat_history, st_student_profile, st_session_mode,
-            st_turn_count, st_teaching_turns_count, st_audio_out, st_mic_input, st_text_input
+            st_turn_count, st_teaching_turns, st_audio_out, st_mic_input, st_text_input
         ]
 
-        st_mic_input.change(fn=st_process_turn, inputs=event_inputs, outputs=event_outputs, show_progress="hidden")
-        st_text_input.submit(fn=st_process_turn, inputs=event_inputs, outputs=event_outputs, show_progress="hidden")
-        st_send_button.click(fn=st_process_turn, inputs=event_inputs, outputs=event_outputs, show_progress="hidden")
+        st_mic_input.change(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
+        st_text_input.submit(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
+        st_send_button.click(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
 
     return student_demo
-
 
 # --- FastAPI App Setup (Continued) ---
 
