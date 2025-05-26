@@ -784,16 +784,16 @@ def build_student_tutor_ui():
         )
 
         # --- Callback to decode token and load lesson context ---
-        def decode_and_load_context(token_val):
+        # --- Callback to decode token and load lesson context ---
+def decode_and_load_context(token_val, request):
     if not token_val:
         print("STUDENT_UI: Token is None, cannot decode.")
         return "Unknown Course", "N/A", "Unknown Student", "Error: No Token", "Please ensure you accessed this page via a valid link."
 
     try:
         payload = jwt.decode(token_val, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
-
         code_from_token = payload.get("code")
-        code_from_query = gr.Request().query_params.get("code")  # ⬅️ Access query param
+        code_from_query = request.query_params.get("code")  # Access query param
 
         if code_from_token and code_from_token != code_from_query:
             print("STUDENT_UI: Access code mismatch.")
@@ -803,7 +803,7 @@ def build_student_tutor_ui():
         student_id = payload["sub"]
         lesson_id_num = int(payload["lesson_id"])
 
-        cfg_path = CONFIG_DIR / f"{course_id.replace(' ','_').lower()}_config.json"
+        cfg_path = CONFIG_DIR / f"{course_id.replace(' ', '_').lower()}_config.json"
         if not cfg_path.exists():
             return course_id, lesson_id_num, student_id, "Error: Course Config Missing", "Course configuration not found."
 
@@ -817,14 +817,12 @@ def build_student_tutor_ui():
         lesson_info = lessons_data[lesson_id_num - 1]
         topic = lesson_info.get("topic_summary", f"Lesson {lesson_id_num}")
 
-        # Calculate text segment
-        num_total_lessons = len(lessons_data)
-        if num_total_lessons == 0 or not full_text:
+        if not full_text:
             segment = "(No specific text segment available for this lesson.)"
         else:
-            chars_per_lesson = len(full_text) // num_total_lessons
+            chars_per_lesson = len(full_text) // len(lessons_data)
             start_char = (lesson_id_num - 1) * chars_per_lesson
-            end_char = lesson_id_num * chars_per_lesson if lesson_id_num < num_total_lessons else len(full_text)
+            end_char = lesson_id_num * chars_per_lesson if lesson_id_num < len(lessons_data) else len(full_text)
             segment = full_text[start_char:end_char].strip() or "(No specific text segment; focusing on general review.)"
 
         print(f"STUDENT_UI: Context loaded: C:{course_id} L:{lesson_id_num} S:{student_id} Topic:{topic[:30]}")
@@ -839,7 +837,12 @@ def build_student_tutor_ui():
         print(f"STUDENT_UI: Error decoding token or loading context: {e}\n{traceback.format_exc()}")
         return "N/A", "N/A", "N/A", "Error: Setup Problem", f"Could not prepare lesson: {e}"
 
-        student_demo.load(fn=decode_and_load_context, inputs=[token_state], outputs=[course_id_state, lesson_id_state, student_id_state, lesson_topic_state, lesson_segment_state])
+        student_demo.load(
+            fn=decode_and_load_context,
+            inputs=[token_state, gr.Request()],
+            outputs=[course_id_state, lesson_id_state, student_id_state, lesson_topic_state, lesson_segment_state]
+        )
+
 
 
         # --- UI Display ---
