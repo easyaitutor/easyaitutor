@@ -1065,26 +1065,26 @@ def root_redirect(): # Renamed to avoid conflict if you define root differently 
 
 # Endpoint for student to access lesson via token
 @app.get("/class", response_class=HTMLResponse)
-async def get_student_lesson_page(request: Request, token: str = None): # Added request: Request for full URL
+async def get_student_lesson_page(request: Request, token: str = None): # token is the JWT string
     if not token:
         return HTMLResponse("<h3>Error: Access token missing. Please use the link provided in your email.</h3>", status_code=400)
     try:
-        # Validate token (audience check is important)
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
+        code_from_payload = payload.get("code")
+
+        if not code_from_payload:
+            # This handles cases where the 'code' might be missing in the JWT payload,
+            # though with the current generate_access_token, it should always be present.
+            return HTMLResponse(f"<h3>Invalid access link.</h3><p>Essential access information (code) is missing from your session link's payload.</p>", status_code=401)
         
-        # Token is valid, redirect to the student UI with the token
-        # The student UI itself will handle decoding and context loading via its Gradio .load() callbacks
-        student_ui_url_with_token = f"{STUDENT_UI_PATH}?token={token}"
-        
-        # If APP_DOMAIN is the full base URL, you might construct the redirect like this:
-        # student_ui_full_url = f"{str(request.base_url).rstrip('/')}{STUDENT_UI_PATH}?token={token}"
-        # However, relative redirect should work fine if student UI is on the same host.
-        return RedirectResponse(url=student_ui_url_with_token)
+        # Redirect to the student UI, passing the original token (JWT) and the code extracted from its payload.
+        student_ui_url_with_token_and_code = f"{STUDENT_UI_PATH}?token={token}&code={code_from_payload}"
+        return RedirectResponse(url=student_ui_url_with_token_and_code)
 
     except jwt.ExpiredSignatureError:
         return HTMLResponse("<h3>Access link has expired.</h3><p>Your session link was valid for a limited time. Please check if a new link is available or contact your instructor.</p>", status_code=401)
     except jwt.InvalidTokenError as e:
-        print(f"Invalid token error on /class: {e}")
+        print(f"Invalid token error on /class: {e}") # e.g., SignatureVerificationError, DecodeError
         return HTMLResponse(f"<h3>Invalid access link.</h3><p>There was a problem with your session link: {e}. Please ensure you copied the entire link correctly.</p>", status_code=401)
     except Exception as e:
         print(f"Error processing /class request: {e}\n{traceback.format_exc()}")
