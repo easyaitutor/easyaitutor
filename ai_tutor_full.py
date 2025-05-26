@@ -842,9 +842,18 @@ def build_student_tutor_ui():
             except Exception as e:
                 return "N/A", "N/A", "N/A", "Error: Unknown", f"Unexpected error: {e}"
 
-        student_demo.load(fn=decode_context, inputs=[token_state, gr.Request()], outputs=[
-            course_id_state, lesson_id_state, student_id_state, lesson_topic_state, lesson_segment_state
-        ])
+        student_demo.load(
+            fn=decode_context,
+            inputs=[token_state],
+            outputs=[
+                course_id_state,
+                lesson_id_state,
+                student_id_state,
+                lesson_topic_state,
+                lesson_segment_state
+            ]
+        )
+
 
         # --- Initial tutor message ---
         def tutor_greeter(topic, segment):
