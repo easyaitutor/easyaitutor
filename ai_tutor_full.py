@@ -896,9 +896,37 @@ def build_student_tutor_ui():
             except:
                 return [[None, msg]], [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg}], "onboarding", 0, 0, None, datetime.now(dt_timezone.utc)
 
-        student_demo.load(fn=tutor_greeter, inputs=[lesson_topic_state, lesson_segment_state], outputs=[
-            st_display_history, st_chat_history, st_session_mode, st_turn_count, st_teaching_turns, st_audio_out, st_session_start
-        ])
+        # Step 1: Decode token on load (already present)
+        student_demo.load(
+            fn=decode_context,
+            inputs=[token_state],
+            outputs=[
+                course_id_state,
+                lesson_id_state,
+                student_id_state,
+                lesson_topic_state,
+                lesson_segment_state
+            ]
+        )
+        
+        # Step 2: AFTER topic and segment are loaded, trigger the greeter
+        lesson_ready_trigger = gr.Button(visible=False)  # dummy trigger
+        lesson_ready_trigger.click(
+            fn=tutor_greeter,
+            inputs=[lesson_topic_state, lesson_segment_state],
+            outputs=[
+                st_display_history, st_chat_history, st_session_mode,
+                st_turn_count, st_teaching_turns, st_audio_out, st_session_start
+            ]
+        )
+        
+        # Automatically click it after decoding
+        student_demo.load(lambda: None, inputs=[], outputs=[]).then(
+            fn=lambda: None, inputs=[], outputs=[]  # Just a way to chain
+        ).then(
+            fn=lambda: None, inputs=[], outputs=[lesson_ready_trigger]  # Triggers the click
+        )
+
 
         # --- Processing student response ---
         def handle_response(mic_path, text, chat_hist, disp_hist, profile, mode, turns, teaching_turns, voice,
