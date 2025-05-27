@@ -870,6 +870,9 @@ def build_student_tutor_ui():
 
         # --- Initial tutor message ---
         def tutor_greeter(topic, segment):
+            topic = topic or "today's topic"
+            segment = segment or ""
+        
             prompt = generate_student_system_prompt("initial_greeting", "", topic, segment)
             try:
                 client = openai.OpenAI()
@@ -881,7 +884,7 @@ def build_student_tutor_ui():
                 msg = res.choices[0].message.content.strip()
             except Exception as e:
                 msg = f"Hi! Let's talk about '{topic}'. What do you already know about it?"
-
+        
             # Convert to speech
             try:
                 client = openai.OpenAI()
