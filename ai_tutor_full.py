@@ -35,7 +35,7 @@ SUPPORT_EMAIL_ADDRESS = os.getenv("SUPPORT_EMAIL_ADDRESS", "easyaitutor@gmail.co
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "a-very-secure-secret-key-please-change")
 if JWT_SECRET_KEY == "a-very-secure-secret-key-please-change":
     print("WARNING: JWT_SECRET_KEY is set to default. Set a strong secret key in env variables.")
-LINK_VALIDITY_HOURS = int(os.getenv("LINK_VALIDITY_HOURS", 6))
+LINK_VALIDITY_HOURS = int(os.getenv("LINK_VALIDITY_HOURS", 24))
 ALGORITHM = "HS256"
 APP_DOMAIN = os.getenv("APP_DOMAIN", "https://www.easyaitutor.com") # Ensure this matches audience in JWT
 
@@ -523,13 +523,15 @@ def generate_plan_callback(course_name_from_input):
                 print(f"DEBUG [generate_plan]: sending email to {student_info['email']} → {access_link}")
 
                 html_body = f"""
-                <html><body style="font-family: sans-serif; line-height:1.5">
-                  <p>Hi {student_info['name']},</p>
-                  <p>Your course <strong>{cfg['course_name']}</strong> starts <strong>today</strong>!</p>
-                  <p>Click here to join: <a href="{access_link}">{access_link}</a></p>
-                  <p>Valid for the next {LINK_VALIDITY_HOURS} hours.</p>
-                  <p>Good luck!</p>
-                </body></html>
+                <html><head><style>body {{font-family: sans-serif;}} strong {{color: #007bff;}} a {{color: #0056b3;}} .container {{padding: 20px; border: 1px solid #ddd; border-radius: 5px;}} .code {{font-size: 1.5em; font-weight: bold; background-color: #f0f0f0; padding: 5px 10px;}}</style></head>
+                <body><div class="container">
+                    <p>Hi {student_info['name']},</p>
+                    <p>Your course <strong>{cfg['course_name']}</strong> starts <strong>today</strong>!</p>
+                    <p><strong>Your access code is:</strong> <span class="code">{access_code}</span></p>
+                    <p>Access link: <a href="{access_link}">{access_link}</a></p>
+                    <p>The link and code are valid for {LINK_VALIDITY_HOURS} hours from generation.</p>
+                    <p>Good luck!<br>AI Tutor System</p>
+                </div></body></html>
                 """
 
                 sent = send_email_notification(
@@ -1012,26 +1014,25 @@ async def get_student_lesson_page(request: Request, token: str = None): # token 
     if not token:
         return HTMLResponse("<h3>Error: Access token missing. Please use the link provided in your email.</h3>", status_code=400)
     try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
-        code_from_payload = payload.get("code")
+        # Validate the token's basic structure, signature, and expiry. Audience is also checked.
+        # This decode is primarily for validation before redirecting to manual code entry.
+        # The full payload processing will happen in the student UI's decode_context after code entry.
+        jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
 
-        if not code_from_payload:
-            # This handles cases where the 'code' might be missing in the JWT payload,
-            # though with the current generate_access_token, it should always be present.
-            return HTMLResponse(f"<h3>Invalid access link.</h3><p>Essential access information (code) is missing from your session link's payload.</p>", status_code=401)
-        
-        # Redirect to the student UI, passing the original token (JWT) and the code extracted from its payload.
-        student_ui_url_with_token_and_code = f"{STUDENT_UI_PATH}?token={token}&code={code_from_payload}"
-        return RedirectResponse(url=student_ui_url_with_token_and_code)
+        # Redirect to the verification page, passing the original token.
+        # The /verify_access page will ask the student to input the 5-digit code from their email.
+        verify_url = f"/verify_access?token={token}"
+        return RedirectResponse(url=verify_url)
 
     except jwt.ExpiredSignatureError:
         return HTMLResponse("<h3>Access link has expired.</h3><p>Your session link was valid for a limited time. Please check if a new link is available or contact your instructor.</p>", status_code=401)
     except jwt.InvalidTokenError as e:
-        print(f"Invalid token error on /class: {e}") # e.g., SignatureVerificationError, DecodeError
-        return HTMLResponse(f"<h3>Invalid access link.</h3><p>There was a problem with your session link: {e}. Please ensure you copied the entire link correctly.</p>", status_code=401)
+        # This covers various issues like InvalidSignatureError, InvalidAudienceError, DecodeError etc.
+        print(f"Invalid token error on /class: {e}")
+        return HTMLResponse(f"<h3>Invalid access link.</h3><p>There was a problem with your session link: {str(e)}. Please ensure you copied the entire link correctly.</p>", status_code=401)
     except Exception as e:
         print(f"Error processing /class request: {e}\n{traceback.format_exc()}")
-        return HTMLResponse(f"<h3>Error preparing lesson.</h3><p>An unexpected error occurred: {e}. Please try again later or contact support.</p>", status_code=500)
+        return HTMLResponse(f"<h3>Error preparing lesson.</h3><p>An unexpected error occurred: {str(e)}. Please try again later or contact support.</p>", status_code=500)
 
 
 @app.on_event("startup")
