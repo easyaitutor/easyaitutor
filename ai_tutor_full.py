@@ -997,9 +997,10 @@ async def verify_access(request: Request, token: str = None):
         <h2>Enter Your Access Code</h2>
         <form method="get" action="/student_tutor_interface/">
             <input type="hidden" name="token" value="{token}">
-            <input type="text" name="code" placeholder="5-digit code" pattern="\\d{{5}}" required>
-            <button type="submit" style="margin-top:10px;">Continue</button>
+            <input type="text" name="code" placeholder="5-digit code" name="code" required>
+            <button type="submit">Continue</button>
         </form>
+
     </body>
     </html>
     """)
