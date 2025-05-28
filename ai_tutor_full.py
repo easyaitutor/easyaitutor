@@ -472,8 +472,15 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, 
         objs = [ln.strip(" -•*") for ln in r2.choices[0].message.content.splitlines() if ln.strip()]
         parsed_students = [{"id": str(uuid.uuid4()), "name": n.strip(), "email": e.strip()} for ln in students_input_str.splitlines() if ',' in ln for n, e in [ln.split(',', 1)]]
         cfg = {"course_name": course_name, "instructor": {"name": instr_name, "email": instr_email}, "class_days": class_days_selected, "start_date": f"{sy}-{sm}-{sd_day}", "end_date": f"{ey}-{em}-{ed_day}", "allowed_devices": devices, "students": parsed_students, "sections_for_description": sections_for_desc_obj, "full_text_content": full_pdf_text, "char_offset_page_map": char_offset_to_page_map, "course_description": desc, "learning_objectives": objs, "lessons": [], "lesson_plan_formatted": ""}
+        # Generate lessons and plan right after setup
+        formatted_plan_str, structured_lessons_list = generate_plan_by_week_structured_and_formatted(cfg)
+        cfg["lessons"] = structured_lessons_list
+        cfg["lesson_plan_formatted"] = formatted_plan_str
+        
+        # Save config to disk with topics included
         path = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        
         syllabus_text = generate_syllabus(cfg)
         return (gr.update(value=syllabus_text, visible=True, interactive=False), gr.update(visible=False), None, gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=True), gr.update(value="", visible=False), gr.update(visible=False), gr.update(visible=True, value=course_name))
     except openai.APIError as oai_err: print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}"); return error_return_tuple(f"⚠️ OpenAI API Error: {oai_err}.")
@@ -819,9 +826,10 @@ def build_student_tutor_ui():
                 payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
                 code_from_token = payload.get("code")
                 code_from_url = request.query_params.get("code")
+                
+                if not code_from_url or code_from_token != code_from_url:
+                    raise ValueError("Access code mismatch. Access denied.")
 
-                if code_from_token != code_from_url:
-                    return "N/A", "N/A", "N/A", "Error: Code Mismatch", "Access code mismatch. Please recheck the link or code."
 
                 course_id = payload["course_id"]
                 student_id = payload["sub"]
