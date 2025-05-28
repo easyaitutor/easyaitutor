@@ -310,34 +310,55 @@ def generate_access_token(student_id, course_id, lesson_id, lesson_date_obj=None
 def send_daily_class_reminders():
     print(f"SCHEDULER: Running daily class reminder job at {datetime.now(dt_timezone.utc)}")
     today_utc = datetime.now(dt_timezone.utc).date()
+
     for config_file in CONFIG_DIR.glob("*_config.json"):
         try:
             cfg = json.loads(config_file.read_text(encoding="utf-8"))
-            course_id, course_name = config_file.stem.replace("_config", ""), cfg.get("course_name", "N/A")
-            if not cfg.get("lessons") or not cfg.get("students"): continue
+            course_id = config_file.stem.replace("_config", "")
+            course_name = cfg.get("course_name", "Unnamed Course")
+
+            if not cfg.get("lessons") or not cfg.get("students"):
+                continue
+
             for lesson in cfg["lessons"]:
-                lesson_date = datetime.strptime(lesson["date"], '%Y-%m-%d').date()
-                if lesson_date == today_utc:
-                    print(f"SCHEDULER: Class found for {course_name} today: Lesson {lesson['lesson_number']}")
-                    class_code = generate_5_digit_code() # This code isn't used in the current email template for link access
-                    for student in cfg["students"]:
-                        student_id, student_email, student_name = student.get("id", "unknown"), student.get("email"), student.get("name", "Student")
-                        if not student_email: continue
-                        token, access_code = generate_access_token(student_id, course_id, lesson["lesson_number"], lesson_date)
-                        access_link = f"{APP_DOMAIN}/class?token={token}" # Use token[0] which is the JWT string
-                        email_subject = f"Today's Class Link for {course_name}: {lesson['topic_summary']}"
-                        email_html_body = f"""
-                        <html><head><style>body {{font-family: sans-serif;}} strong {{color: #007bff;}} a {{color: #0056b3;}} .container {{padding: 20px; border: 1px solid #ddd; border-radius: 5px;}} .code {{font-size: 1.5em; font-weight: bold; background-color: #f0f0f0; padding: 5px 10px;}}</style></head>
-                        <body><div class="container">
-                            <p>Hi {student_name},</p>
-                            <p>Your class for <strong>{course_name}</strong> - "{lesson['topic_summary']}" - is today!</p>
-                            <p><strong>Your access code is:</strong> <span class="code">{access_code}</span></p>
-                            <p>Access link: <a href="{access_link}">{access_link}</a></p>
-                            <p>The link and code are valid for {LINK_VALIDITY_HOURS} hours from generation, typically covering morning to early afternoon UTC on {today_utc.strftime('%B %d, %Y')}.</p>
-                            <p>Best regards,<br>AI Tutor System</p>
-                        </div></body></html>"""
-                        send_email_notification(student_email, email_subject, email_html_body, student_name) # from_name should be student_name if you want Reply-To to be student
-        except Exception as e: print(f"SCHEDULER: Error in daily reminders for {config_file.name}: {e}\n{traceback.format_exc()}")
+                try:
+                    lesson_date = datetime.strptime(lesson["date"], '%Y-%m-%d').date()
+                except:
+                    continue
+
+                if lesson_date != today_utc:
+                    continue
+
+                print(f"SCHEDULER: Sending reminder for {course_name} today: Lesson {lesson['lesson_number']}")
+                topic = lesson.get("topic_summary", f"Lesson {lesson['lesson_number']}")
+
+                for student in cfg["students"]:
+                    student_id = student.get("id", "unknown")
+                    student_email = student.get("email")
+                    student_name = student.get("name", "Student")
+
+                    if not student_email:
+                        continue
+
+                    token, access_code = generate_access_token(student_id, course_id, lesson["lesson_number"], lesson_date)
+                    access_link = f"{APP_DOMAIN}/class?token={token}&code={access_code}"
+
+                    email_subject = f"Today's Class: {topic} — {course_name}"
+                    email_html_body = f"""
+                    <html><body><div style="font-family: sans-serif;">
+                        <p>Hi {student_name},</p>
+                        <p>Your class for <strong>{course_name}</strong> on "<strong>{topic}</strong>" is today.</p>
+                        <p><strong>Your access code:</strong> <code style="font-size: 1.3em;">{access_code}</code></p>
+                        <p><a href="{access_link}">Click here to start your lesson</a></p>
+                        <p>This link is valid for {LINK_VALIDITY_HOURS} hours.</p>
+                        <p>— AI Tutor System</p>
+                    </div></body></html>
+                    """
+
+                    send_email_notification(student_email, email_subject, email_html_body, student_name)
+
+        except Exception as e:
+            print(f"SCHEDULER: Error processing {config_file.name}: {e}\n{traceback.format_exc()}")
 
 def log_student_progress(student_id, course_id, lesson_id, quiz_score_str, session_duration_secs, engagement_notes="N/A"):
     if not PROGRESS_LOG_FILE.exists():
@@ -819,8 +840,8 @@ def build_student_tutor_ui():
 
         # --- Decode token and load context ---
         def decode_context(token, request: gr.Request):
-            if not token:
-                return "Unknown Course", "N/A", "Unknown Student", "Error: No Token", "Please ensure you accessed this page via a valid link."
+            if not code_from_url or code_from_token != code_from_url:
+                return "N/A", "N/A", "N/A", "Error: Invalid Code", "Invalid or missing access code. Please use the correct code from your email."
 
             try:
                 payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
