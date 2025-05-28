@@ -869,11 +869,36 @@ def build_student_tutor_ui():
 
 
         # --- Initial tutor message ---
-        def tutor_greeter(topic, segment):
-            topic = topic or "today's topic"
-            segment = segment or ""
-        
-            prompt = generate_student_system_prompt("initial_greeting", "", topic, segment)
+        # In build_student_tutor_ui() function:
+
+        # --- Initial tutor message ---
+        # Add lesson_id to function arguments
+        def tutor_greeter(current_lesson_topic, current_lesson_segment, current_lesson_id):
+            display_topic = "" # This will hold the topic string for the prompt
+
+            lesson_id_str = str(current_lesson_id) if current_lesson_id is not None else "the current"
+
+            if isinstance(current_lesson_topic, str) and current_lesson_topic.strip():
+                # Topic is a non-empty string
+                stripped_topic = current_lesson_topic.strip()
+                if stripped_topic.startswith("Error:") or stripped_topic.startswith("Unknown Course") or stripped_topic.startswith("Unknown Student"):
+                    # It's an error message from decode_context
+                    display_topic = f"Lesson {lesson_id_str}: We're experiencing a technical difficulty loading lesson details ({stripped_topic}). Let's proceed with a general discussion."
+                else:
+                    # It's a valid topic
+                    display_topic = stripped_topic
+            else:
+                # Topic is None, empty, not a string, or just whitespace
+                display_topic = f"Lesson {lesson_id_str} (Specific topic details are currently unavailable)"
+
+            # Ensure segment is a string, default to empty if not
+            current_lesson_segment = current_lesson_segment if isinstance(current_lesson_segment, str) else ""
+
+            prompt = generate_student_system_prompt("initial_greeting", "", display_topic, current_lesson_segment)
+            
+            audio_fp_str = None # Default for audio path
+            msg_content = ""
+
             try:
                 client = openai.OpenAI()
                 res = client.chat.completions.create(
@@ -881,24 +906,53 @@ def build_student_tutor_ui():
                     messages=[{"role": "system", "content": prompt}],
                     max_tokens=150
                 )
-                msg = res.choices[0].message.content.strip()
-            except Exception as e:
-                msg = f"Hi! Let's talk about '{topic}'. What do you already know about it?"
-        
-            # Convert to speech
-            try:
-                client = openai.OpenAI()
-                speech = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg)
-                audio_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
-                with open(audio_fp, "wb") as f:
-                    f.write(speech.content)
-                return [[None, msg]], [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg}], "onboarding", 0, 0, str(audio_fp), datetime.now(dt_timezone.utc)
-            except:
-                return [[None, msg]], [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg}], "onboarding", 0, 0, None, datetime.now(dt_timezone.utc)
+                msg_content = res.choices[0].message.content.strip()
+                
+                # Attempt TTS for the successful chat response
+                try:
+                    speech_res = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
+                    audio_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
+                    with open(audio_fp, "wb") as f:
+                        f.write(speech_res.content)
+                    audio_fp_str = str(audio_fp)
+                except Exception as e_tts:
+                    print(f"TTS Error in tutor_greeter for main response: {e_tts}")
+                    # audio_fp_str remains None, chat message will still be displayed
 
-        student_demo.load(fn=tutor_greeter, inputs=[lesson_topic_state, lesson_segment_state], outputs=[
-    st_display_history, st_chat_history, st_session_mode, st_turn_count, st_teaching_turns, st_audio_out, st_session_start
-])
+            except Exception as e_chat:
+                print(f"Chat Completion Error in tutor_greeter: {e_chat}")
+                # Construct a fallback message if chat completion fails
+                msg_content = f"Hello! I'm having a little trouble starting up fully. We were planning to discuss '{display_topic}'. How about you tell me what you know or expect from this topic?"
+                
+                # Attempt TTS for the fallback message
+                try:
+                    # Ensure client is available or re-initialize if necessary
+                    client_fallback_tts = openai.OpenAI() 
+                    speech_res_fallback = client_fallback_tts.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
+                    audio_fp_fallback = STUDENT_AUDIO_DIR / f"intro_fallback_{uuid.uuid4()}.mp3"
+                    with open(audio_fp_fallback, "wb") as f:
+                        f.write(speech_res_fallback.content)
+                    audio_fp_str = str(audio_fp_fallback) # Use this audio for fallback
+                except Exception as e_tts_fallback:
+                    print(f"TTS Error in tutor_greeter for fallback message: {e_tts_fallback}")
+                    # audio_fp_str remains None
+
+            # Prepare history for Gradio Chatbot and internal state
+            # The system prompt is always added to internal chat_history for context,
+            # but not directly to display_history.
+            # display_history shows [user_msg, assistant_msg] pairs. Initial greeting is [None, assistant_msg].
+            initial_display_history = [[None, msg_content]]
+            initial_chat_history = [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg_content}]
+            
+            return initial_display_history, initial_chat_history, "onboarding", 0, 0, audio_fp_str, datetime.now(dt_timezone.utc)
+
+        # Update the student_demo.load call for tutor_greeter to include lesson_id_state
+        student_demo.load(fn=tutor_greeter,
+                          inputs=[lesson_topic_state, lesson_segment_state, lesson_id_state], # Added lesson_id_state
+                          outputs=[
+                              st_display_history, st_chat_history, st_session_mode, st_turn_count,
+                              st_teaching_turns, st_audio_out, st_session_start
+                          ])
 
 
         # --- Processing student response ---
