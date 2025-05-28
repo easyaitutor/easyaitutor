@@ -812,74 +812,47 @@ def build_student_tutor_ui():
 
         # --- Decode token and load context ---
         def decode_context(token, request: gr.Request):
-            print(f"DEBUG decode_context: Received token='{token}'") # Print received token
             if not token:
-                # For all return paths, ensure 5 values are returned
-                print("DEBUG decode_context: No token provided.")
                 return "Unknown Course", "N/A", "Unknown Student", "Error: No Token", "Please ensure you accessed this page via a valid link."
-        
+
             try:
                 payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
                 code_from_token = payload.get("code")
-                code_from_url = request.query_params.get("code") # This was missing from your original code, ensure it's there
-        
-                print(f"DEBUG decode_context: code_from_token='{code_from_token}', code_from_url='{code_from_url}'")
-        
+                code_from_url = request.query_params.get("code")
+
                 if code_from_token != code_from_url:
-                    print("DEBUG decode_context: Code mismatch.")
                     return "N/A", "N/A", "N/A", "Error: Code Mismatch", "Access code mismatch. Please recheck the link or code."
-        
+
                 course_id = payload["course_id"]
                 student_id = payload["sub"]
-                lesson_id = int(payload["lesson_id"]) # Should be an int
-        
-                print(f"DEBUG decode_context: Parsed from token - course_id='{course_id}', student_id='{student_id}', lesson_id={lesson_id} (type: {type(lesson_id)})")
-        
+                lesson_id = int(payload["lesson_id"])
+
                 cfg_path = CONFIG_DIR / f"{course_id}_config.json"
                 if not cfg_path.exists():
-                    print(f"DEBUG decode_context: Config file not found at {cfg_path}")
-                    # Return 5 values
-                    return course_id, lesson_id, student_id, "Error: Course Config Missing", f"No config file found for course '{course_id}'."
-        
+                    return course_id, lesson_id, student_id, "Error: Course Config Missing", "No config file found for this course."
+
                 cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
                 lessons = cfg.get("lessons", [])
                 full_text = cfg.get("full_text_content", "")
-        
-                if not lessons:
-                    print(f"DEBUG decode_context: No lessons found in config for course '{course_id}'.")
-                    return course_id, lesson_id, student_id, "Error: No Lessons in Config", "Course configuration has no lessons."
-        
-        
+
                 if lesson_id <= 0 or lesson_id > len(lessons):
-                    print(f"DEBUG decode_context: Lesson ID {lesson_id} is out of range for {len(lessons)} lessons.")
-                    # Return 5 values
-                    return course_id, lesson_id, student_id, "Error: Lesson Invalid", f"Lesson ID {lesson_id} is out of range."
-        
+                    return course_id, lesson_id, student_id, "Error: Lesson Invalid", "Lesson ID is out of range."
+
                 lesson = lessons[lesson_id - 1]
-                # Default to a clear placeholder if topic_summary is missing or truly empty
-                topic = lesson.get("topic_summary")
-                if not topic or not topic.strip(): # If topic is None, empty, or just whitespace
-                    topic = f"Lesson {lesson_id} - Topic Undefined"
-                    print(f"DEBUG decode_context: topic_summary for lesson {lesson_id} was missing, None, or empty. Using placeholder: '{topic}'")
-                else:
-                    topic = topic.strip() # Ensure no leading/trailing whitespace
-        
-                chars_per_lesson = len(full_text) // len(lessons) if full_text and lessons else 0
+                topic = lesson.get("topic_summary", f"Lesson {lesson_id}")
+
+                chars_per_lesson = len(full_text) // len(lessons) if full_text else 0
                 start = (lesson_id - 1) * chars_per_lesson
                 end = start + chars_per_lesson
                 segment = full_text[start:end].strip() if full_text else "(No content for this lesson)"
-        
-                print(f"DEBUG decode_context: SUCCESS - course_id='{course_id}', lesson_id={lesson_id}, student_id='{student_id}', topic='{topic}', segment_len={len(segment)}")
+
                 return course_id, lesson_id, student_id, topic, segment
-        
+
             except jwt.ExpiredSignatureError:
-                print("DEBUG decode_context: JWT ExpiredSignatureError.")
                 return "N/A", "N/A", "N/A", "Error: Expired", "This link has expired."
             except jwt.InvalidTokenError as e:
-                print(f"DEBUG decode_context: JWT InvalidTokenError: {e}")
                 return "N/A", "N/A", "N/A", "Error: Invalid Token", f"Invalid token: {e}"
             except Exception as e:
-                print(f"DEBUG decode_context: UNEXPECTED ERROR: {e}\n{traceback.format_exc()}")
                 return "N/A", "N/A", "N/A", "Error: Unknown", f"Unexpected error: {e}"
 
         student_demo.load(
