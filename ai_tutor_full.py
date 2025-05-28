@@ -838,10 +838,10 @@ def build_student_tutor_ui():
                 if lesson_id <= 0 or lesson_id > len(lessons):
                     return course_id, lesson_id, student_id, "Error: Lesson Invalid", "Lesson ID is out of range."
 
-                lesson = lessons[lesson_id - 1]
                 topic = lesson.get("topic_summary", "").strip()
-                if topic.lower() in {"", "current"}:
+                if not topic or topic.lower() in {"", "current", "topic", "unknown"}:
                     topic = f"Lesson {lesson_id}: Topic TBD"
+
 
                 chars_per_lesson = len(full_text) // len(lessons) if full_text else 0
                 start = (lesson_id - 1) * chars_per_lesson
