@@ -839,8 +839,9 @@ def build_student_tutor_ui():
         student_demo.load(fn=grab_token, inputs=[], outputs=[token_state])
 
        # --- Decode token and load context ---
+               # In decode_context function:
         def decode_context(token, request: gr.Request):
-            code_from_url = request.query_params.get("code")  # ✅ assign early
+            code_from_url = request.query_params.get("code")
             code_from_token = ""
         
             try:
@@ -848,10 +849,52 @@ def build_student_tutor_ui():
                 code_from_token = payload.get("code")
         
                 if not code_from_url or code_from_token != code_from_url:
-                    raise ValueError("Access code mismatch. Access denied.")
+                    raise ValueError("Access code mismatch. Access denied.") # This will be caught by the except below
         
-            except Exception as e:
-                return "N/A", "N/A", "N/A", "Error: Invalid Code", "Invalid or missing access code. Please use the correct code from your email."
+                course_id = payload["course_id"]
+                student_id = payload["sub"]
+                lesson_id_from_token = int(payload["lesson_id"]) # Renamed to avoid conflict with Gradio state name
+        
+                cfg_path = CONFIG_DIR / f"{course_id}_config.json"
+                if not cfg_path.exists():
+                    # Return course_id, lesson_id, student_id, error_topic, error_detail
+                    return course_id, lesson_id_from_token, student_id, "Error: Course Config Missing", f"Configuration file for course '{course_id}' not found."
+        
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                lessons = cfg.get("lessons", [])
+                full_text = cfg.get("full_text_content", "")
+        
+                # Lesson indexing is 0-based from the list, but lesson_id in token might be 1-based.
+                # The JSON 'lesson_number' is 1-based. Let's assume lesson_id_from_token is 1-based lesson_number.
+                # Find the lesson by lesson_number.
+                actual_lesson_obj = None
+                for lesson_item in lessons:
+                    if lesson_item.get("lesson_number") == lesson_id_from_token:
+                        actual_lesson_obj = lesson_item
+                        break
+                
+                if not actual_lesson_obj:
+                    return course_id, lesson_id_from_token, student_id, "Error: Lesson Invalid", f"Lesson ID {lesson_id_from_token} not found in course {course_id}."
+
+                topic_summary_for_state = actual_lesson_obj.get("topic_summary", f"Lesson {lesson_id_from_token} - Topic Undefined")
+                # For segment, we ideally need the specific text for this lesson.
+                # The generate_plan_by_week_structured_and_formatted function calculates `seg_starts`
+                # which are character offsets. This info isn't directly saved to use here.
+                # For now, passing full_text is what the code did, and generate_student_system_prompt truncates it.
+                # A more advanced solution would involve storing/retrieving the exact segment.
+                lesson_segment_for_state = full_text # Or ideally, the specific segment for actual_lesson_obj
+                
+                return course_id, lesson_id_from_token, student_id, topic_summary_for_state, lesson_segment_for_state
+                
+            except ValueError as ve: # Catch the specific "Access code mismatch"
+                 return "N/A", "N/A", "N/A", "Error: Invalid Code", str(ve)
+            except jwt.ExpiredSignatureError:
+                return "N/A", "N/A", "N/A", "Error: Token Expired", "Your access link has expired."
+            except jwt.InvalidTokenError as e:
+                return "N/A", "N/A", "N/A", "Error: Invalid Token", f"Invalid access link: {str(e)}"
+            except Exception as e: # Catch any other errors during decoding or file loading
+                print(f"Error in decode_context: {e}\n{traceback.format_exc()}")
+                return "N/A", "N/A", "N/A", "Error: System Issue", "A system error occurred while validating your access."
         
             course_id = payload["course_id"]
             student_id = payload["sub"]
@@ -877,26 +920,27 @@ def build_student_tutor_ui():
         # --- Initial tutor message ---
         # Add lesson_id to function arguments
         def tutor_greeter(current_lesson_topic, current_lesson_segment, current_lesson_id):
-            display_topic = "" # This will hold the topic string for the prompt
-
+            display_topic = ""
             lesson_id_str = str(current_lesson_id) if current_lesson_id is not None else "the current"
 
             if isinstance(current_lesson_topic, str) and current_lesson_topic.strip():
-                # Topic is a non-empty string
                 stripped_topic = current_lesson_topic.strip()
                 if stripped_topic.startswith("Error:") or stripped_topic.startswith("Unknown Course") or stripped_topic.startswith("Unknown Student"):
-                    # It's an error message from decode_context
-                    display_topic = f"Lesson {lesson_id_str}: We're experiencing a technical difficulty loading lesson details ({stripped_topic}). Let's proceed with a general discussion."
+                    # --- SOLUTION FOR ISSUE 1 ---
+                    # current_lesson_segment contains the detailed error message from decode_context
+                    error_message_for_student = f"Access Denied: {current_lesson_segment if isinstance(current_lesson_segment, str) else 'Please check your access code and try again.'}"
+                    initial_display_history = [[None, error_message_for_student]]
+                    # No AI call, no system prompt needed if we are in an error state.
+                    initial_chat_history = [] 
+                    return initial_display_history, initial_chat_history, "error_state", 0, 0, None, datetime.now(dt_timezone.utc)
+                    # --- END SOLUTION FOR ISSUE 1 ---
                 else:
-                    # It's a valid topic
                     display_topic = stripped_topic
-            else:
-                # Topic is None, empty, not a string, or just whitespace
+            else: # This branch will now only be hit if topic is genuinely unavailable but token was valid
                 display_topic = f"Lesson {lesson_id_str} (Specific topic details are currently unavailable)"
 
             # Ensure segment is a string, default to empty if not
             current_lesson_segment = current_lesson_segment if isinstance(current_lesson_segment, str) else ""
-
             prompt = generate_student_system_prompt("initial_greeting", "", display_topic, current_lesson_segment)
             
             audio_fp_str = None # Default for audio path
