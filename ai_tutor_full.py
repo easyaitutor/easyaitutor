@@ -838,65 +838,37 @@ def build_student_tutor_ui():
 
         student_demo.load(fn=grab_token, inputs=[], outputs=[token_state])
 
-        # --- Decode token and load context ---
+       # --- Decode token and load context ---
         def decode_context(token, request: gr.Request):
-            if not code_from_url or code_from_token != code_from_url:
-                return "N/A", "N/A", "N/A", "Error: Invalid Code", "Invalid or missing access code. Please use the correct code from your email."
-
+            code_from_url = request.query_params.get("code")  # ✅ assign early
+            code_from_token = ""
+        
             try:
                 payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
                 code_from_token = payload.get("code")
-                code_from_url = request.query_params.get("code")
-                
+        
                 if not code_from_url or code_from_token != code_from_url:
                     raise ValueError("Access code mismatch. Access denied.")
-
-
-                course_id = payload["course_id"]
-                student_id = payload["sub"]
-                lesson_id = int(payload["lesson_id"])
-
-                cfg_path = CONFIG_DIR / f"{course_id}_config.json"
-                if not cfg_path.exists():
-                    return course_id, lesson_id, student_id, "Error: Course Config Missing", "No config file found for this course."
-
-                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-                lessons = cfg.get("lessons", [])
-                full_text = cfg.get("full_text_content", "")
-
-                if lesson_id <= 0 or lesson_id > len(lessons):
-                    return course_id, lesson_id, student_id, "Error: Lesson Invalid", "Lesson ID is out of range."
-
-                topic = lesson.get("topic_summary", "").strip()
-                if not topic or topic.lower() in {"", "current", "topic", "unknown"}:
-                    topic = f"Lesson {lesson_id}: Topic TBD"
-
-
-                chars_per_lesson = len(full_text) // len(lessons) if full_text else 0
-                start = (lesson_id - 1) * chars_per_lesson
-                end = start + chars_per_lesson
-                segment = full_text[start:end].strip() if full_text else "(No content for this lesson)"
-
-                return course_id, lesson_id, student_id, topic, segment
-
-            except jwt.ExpiredSignatureError:
-                return "N/A", "N/A", "N/A", "Error: Expired", "This link has expired."
-            except jwt.InvalidTokenError as e:
-                return "N/A", "N/A", "N/A", "Error: Invalid Token", f"Invalid token: {e}"
+        
             except Exception as e:
-                return "N/A", "N/A", "N/A", "Error: Unknown", f"Unexpected error: {e}"
-
-        student_demo.load(
-            fn=decode_context,
-            inputs=[token_state],
-            outputs=[
-                course_id_state,
-                lesson_id_state,
-                student_id_state,
-                lesson_topic_state,
-                lesson_segment_state
-            ]
-        )
+                return "N/A", "N/A", "N/A", "Error: Invalid Code", "Invalid or missing access code. Please use the correct code from your email."
+        
+            course_id = payload["course_id"]
+            student_id = payload["sub"]
+            lesson_id = int(payload["lesson_id"])
+        
+            cfg_path = CONFIG_DIR / f"{course_id}_config.json"
+            if not cfg_path.exists():
+                return course_id, lesson_id, student_id, "Error: Course Config Missing", "No config file found for this course."
+        
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            lessons = cfg.get("lessons", [])
+            full_text = cfg.get("full_text_content", "")
+        
+            if lesson_id < 0 or lesson_id >= len(lessons):
+                return course_id, lesson_id, student_id, "Error: Lesson Invalid", "Lesson ID is out of range."
+        
+            return course_id, lesson_id, student_id, lessons[lesson_id], full_text
 
 
         # --- Initial tutor message ---
