@@ -832,11 +832,30 @@ def build_student_tutor_ui():
                 st_chatbot = gr.Chatbot(label="Lesson Conversation", height=500, bubble_full_width=False)
                 st_audio_out = gr.Audio(type="filepath", autoplay=True, label="🎧 Tutor’s Voice")
 
-        # --- Extract token from query ---
-        def grab_token(request: gr.Request):
-            return request.query_params.get("token")
-
-        student_demo.load(fn=grab_token, inputs=[], outputs=[token_state])
+            # --- Extract token from query ---
+            def grab_token(request: gr.Request):
+                return request.query_params.get("token")
+        
+            # 1) grab the raw JWT from the URL
+            student_demo.load(
+                fn=grab_token,
+                inputs=[],
+                outputs=[token_state]
+            )
+        
+            # 2) decode the token (and validate the 5-digit code) to populate our states
+            student_demo.load(
+                fn=decode_context,
+                inputs=[token_state, gr.Request],
+                outputs=[
+                    course_id_state,
+                    lesson_id_state,
+                    student_id_state,
+                    lesson_topic_state,
+                    lesson_segment_state
+                ],
+                queue=False  # ensure this runs after grab_token
+            )
 
        # --- Decode token and load context ---
                # In decode_context function:
