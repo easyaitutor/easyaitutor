@@ -871,36 +871,32 @@ def build_student_tutor_ui():
         # --- Initial tutor message ---
         # In build_student_tutor_ui() function:
 
-                # --- Initial tutor message ---
+        # --- Initial tutor message ---
         # Add lesson_id to function arguments
         def tutor_greeter(current_lesson_topic, current_lesson_segment, current_lesson_id):
-            """
-            Builds the very first message from the tutor. Uses the lesson topic that
-            was written into the lesson plan; falls back only when that topic is truly
-            missing.
-            """
-            # 1️⃣  Clean and validate inputs
-            topic_ok = (
-                isinstance(current_lesson_topic, str)
-                and current_lesson_topic.strip()
-                and not current_lesson_topic.startswith(
-                    ("Error:", "Unknown Course", "Unknown Student")
-                )
-            )
-            lesson_id_str = str(current_lesson_id) if current_lesson_id is not None else "?"
-            segment = current_lesson_segment if isinstance(current_lesson_segment, str) else ""
+            display_topic = "" # This will hold the topic string for the prompt
 
-            # 2️⃣  Decide which topic string to display
-            if topic_ok:
-                display_topic = current_lesson_topic.strip()
+            lesson_id_str = str(current_lesson_id) if current_lesson_id is not None else "the current"
+
+            if isinstance(current_lesson_topic, str) and current_lesson_topic.strip():
+                # Topic is a non-empty string
+                stripped_topic = current_lesson_topic.strip()
+                if stripped_topic.startswith("Error:") or stripped_topic.startswith("Unknown Course") or stripped_topic.startswith("Unknown Student"):
+                    # It's an error message from decode_context
+                    display_topic = f"Lesson {lesson_id_str}: We're experiencing a technical difficulty loading lesson details ({stripped_topic}). Let's proceed with a general discussion."
+                else:
+                    # It's a valid topic
+                    display_topic = stripped_topic
             else:
-                display_topic = f"Lesson {lesson_id_str} (topic unavailable)"
+                # Topic is None, empty, not a string, or just whitespace
+                display_topic = f"Lesson {lesson_id_str} (Specific topic details are currently unavailable)"
 
-            # 3️⃣  Build the system prompt
-            prompt = generate_student_system_prompt("initial_greeting", "", display_topic, segment)
+            # Ensure segment is a string, default to empty if not
+            current_lesson_segment = current_lesson_segment if isinstance(current_lesson_segment, str) else ""
 
-            # 4️⃣  Call the LLM + (optional) TTS
-            audio_fp_str = None  # Default for audio path
+            prompt = generate_student_system_prompt("initial_greeting", "", display_topic, current_lesson_segment)
+            
+            audio_fp_str = None # Default for audio path
             msg_content = ""
 
             try:
@@ -908,15 +904,13 @@ def build_student_tutor_ui():
                 res = client.chat.completions.create(
                     model=STUDENT_CHAT_MODEL,
                     messages=[{"role": "system", "content": prompt}],
-                    max_tokens=150,
+                    max_tokens=150
                 )
                 msg_content = res.choices[0].message.content.strip()
-
+                
                 # Attempt TTS for the successful chat response
                 try:
-                    speech_res = client.audio.speech.create(
-                        model=STUDENT_TTS_MODEL, voice="nova", input=msg_content
-                    )
+                    speech_res = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
                     audio_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
                     with open(audio_fp, "wb") as f:
                         f.write(speech_res.content)
@@ -928,42 +922,29 @@ def build_student_tutor_ui():
             except Exception as e_chat:
                 print(f"Chat Completion Error in tutor_greeter: {e_chat}")
                 # Construct a fallback message if chat completion fails
-                msg_content = (
-                    f"Hello! I'm having a little trouble starting up fully. "
-                    f"We were planning to discuss '{display_topic}'. "
-                    f"How about you tell me what you know or expect from this topic?"
-                )
-
+                msg_content = f"Hello! I'm having a little trouble starting up fully. We were planning to discuss '{display_topic}'. How about you tell me what you know or expect from this topic?"
+                
                 # Attempt TTS for the fallback message
                 try:
-                    client_fallback_tts = openai.OpenAI()
-                    speech_res_fallback = client_fallback_tts.audio.speech.create(
-                        model=STUDENT_TTS_MODEL, voice="nova", input=msg_content
-                    )
+                    # Ensure client is available or re-initialize if necessary
+                    client_fallback_tts = openai.OpenAI() 
+                    speech_res_fallback = client_fallback_tts.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
                     audio_fp_fallback = STUDENT_AUDIO_DIR / f"intro_fallback_{uuid.uuid4()}.mp3"
                     with open(audio_fp_fallback, "wb") as f:
                         f.write(speech_res_fallback.content)
-                    audio_fp_str = str(audio_fp_fallback)  # Use this audio for fallback
+                    audio_fp_str = str(audio_fp_fallback) # Use this audio for fallback
                 except Exception as e_tts_fallback:
                     print(f"TTS Error in tutor_greeter for fallback message: {e_tts_fallback}")
                     # audio_fp_str remains None
 
-            # 5️⃣  Prepare histories for Gradio Chatbot and internal state
+            # Prepare history for Gradio Chatbot and internal state
+            # The system prompt is always added to internal chat_history for context,
+            # but not directly to display_history.
+            # display_history shows [user_msg, assistant_msg] pairs. Initial greeting is [None, assistant_msg].
             initial_display_history = [[None, msg_content]]
-            initial_chat_history = [
-                {"role": "system", "content": prompt},
-                {"role": "assistant", "content": msg_content},
-            ]
-
-            return (
-                initial_display_history,
-                initial_chat_history,
-                "onboarding",
-                0,
-                0,
-                audio_fp_str,
-                datetime.now(dt_timezone.utc),
-            )
+            initial_chat_history = [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg_content}]
+            
+            return initial_display_history, initial_chat_history, "onboarding", 0, 0, audio_fp_str, datetime.now(dt_timezone.utc)
 
         # Update the student_demo.load call for tutor_greeter to include lesson_id_state
         student_demo.load(fn=tutor_greeter,
@@ -1082,57 +1063,37 @@ async def verify_access(request: Request, token: str = None):
     </html>
     """)
 
-#  /verify_access – two-step gate: ① show form ② validate code + redirect
-@app.get("/verify_access", response_class=HTMLResponse)
-async def verify_access(request: Request,
-                        token: str | None = None,
-                        code: str | None = None):
-    """
-    GET  /verify_access?token=JWT            → renders form that asks for the code
-    GET  /verify_access?token=JWT&code=12345 → validates code and, if it matches,
-                                              redirects to /student_tutor_interface
-    """
-    if token is None:
-        return HTMLResponse("<h3>Error: Missing token.</h3>", status_code=400)
+@app.get("/")
+def root_redirect(): # Renamed to avoid conflict if you define root differently elsewhere
+    return RedirectResponse(url="/instructor")
 
-    # ­– Step ① ­–  Show the HTML form (first visit, no code supplied)
-    if code is None:
-        return HTMLResponse(f"""
-        <html><head><title>Access verification</title></head>
-        <body style="font-family:sans-serif; margin:50px;">
-            <h2>Enter your 5-digit lesson code</h2>
-            <form method="get" action="/verify_access">
-                <input type="hidden" name="token" value="{token}">
-                <input type="text" name="code" pattern="\\d{{5}}" maxlength="5"
-                       placeholder="12345" required>
-                <button type="submit">Continue</button>
-            </form>
-        </body></html>
-        """)
-
-    # ­– Step ② ­–  Validate the code that the student just typed in
+# Endpoint for student to access lesson via token
+@app.get("/class", response_class=HTMLResponse)
+async def get_student_lesson_page(request: Request, token: str = None): # token is the JWT string
+    if not token:
+        return HTMLResponse("<h3>Error: Access token missing. Please use the link provided in your email.</h3>", status_code=400)
     try:
-        payload = jwt.decode(token,
-                             JWT_SECRET_KEY,
-                             algorithms=[ALGORITHM],
-                             audience=APP_DOMAIN)
+        # Validate the token's basic structure, signature, and expiry. Audience is also checked.
+        # This decode is primarily for validation before redirecting to manual code entry.
+        # The full payload processing will happen in the student UI's decode_context after code entry.
+        jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
+
+        # Redirect to the verification page, passing the original token.
+        # The /verify_access page will ask the student to input the 5-digit code from their email.
+        verify_url = f"/verify_access?token={token}"
+        return RedirectResponse(url=verify_url)
+
     except jwt.ExpiredSignatureError:
-        return HTMLResponse("<h3>This link has expired.</h3>", status_code=401)
-    except jwt.InvalidTokenError as exc:
-        return HTMLResponse(f"<h3>Invalid link:</h3><p>{exc}</p>", status_code=401)
+        return HTMLResponse("<h3>Access link has expired.</h3><p>Your session link was valid for a limited time. Please check if a new link is available or contact your instructor.</p>", status_code=401)
+    except jwt.InvalidTokenError as e:
+        # This covers various issues like InvalidSignatureError, InvalidAudienceError, DecodeError etc.
+        print(f"Invalid token error on /class: {e}")
+        return HTMLResponse(f"<h3>Invalid access link.</h3><p>There was a problem with your session link: {str(e)}. Please ensure you copied the entire link correctly.</p>", status_code=401)
+    except Exception as e:
+        print(f"Error processing /class request: {e}\n{traceback.format_exc()}")
+        return HTMLResponse(f"<h3>Error preparing lesson.</h3><p>An unexpected error occurred: {str(e)}. Please try again later or contact support.</p>", status_code=500)
 
-    if code != payload.get("code"):
-        return HTMLResponse(
-            "<h3>Incorrect code.</h3>"
-            "<p>Please double-check the 5-digit code we emailed you.</p>",
-            status_code=401
-        )
 
-    # Success – redirect and carry the validated code forward
-    return RedirectResponse(
-        url=f"{STUDENT_UI_PATH}?token={token}&code={code}",
-        status_code=302
-    )
 @app.on_event("startup")
 async def startup_event():
     scheduler.add_job(send_daily_class_reminders, trigger=CronTrigger(hour=5, minute=50, timezone='UTC'), id="daily_reminders", name="Daily Class Reminders", replace_existing=True)
