@@ -310,55 +310,34 @@ def generate_access_token(student_id, course_id, lesson_id, lesson_date_obj=None
 def send_daily_class_reminders():
     print(f"SCHEDULER: Running daily class reminder job at {datetime.now(dt_timezone.utc)}")
     today_utc = datetime.now(dt_timezone.utc).date()
-
     for config_file in CONFIG_DIR.glob("*_config.json"):
         try:
             cfg = json.loads(config_file.read_text(encoding="utf-8"))
-            course_id = config_file.stem.replace("_config", "")
-            course_name = cfg.get("course_name", "Unnamed Course")
-
-            if not cfg.get("lessons") or not cfg.get("students"):
-                continue
-
+            course_id, course_name = config_file.stem.replace("_config", ""), cfg.get("course_name", "N/A")
+            if not cfg.get("lessons") or not cfg.get("students"): continue
             for lesson in cfg["lessons"]:
-                try:
-                    lesson_date = datetime.strptime(lesson["date"], '%Y-%m-%d').date()
-                except:
-                    continue
-
-                if lesson_date != today_utc:
-                    continue
-
-                print(f"SCHEDULER: Sending reminder for {course_name} today: Lesson {lesson['lesson_number']}")
-                topic = lesson.get("topic_summary", f"Lesson {lesson['lesson_number']}")
-
-                for student in cfg["students"]:
-                    student_id = student.get("id", "unknown")
-                    student_email = student.get("email")
-                    student_name = student.get("name", "Student")
-
-                    if not student_email:
-                        continue
-
-                    token, access_code = generate_access_token(student_id, course_id, lesson["lesson_number"], lesson_date)
-                    access_link = f"{APP_DOMAIN}/class?token={token}&code={access_code}"
-
-                    email_subject = f"Today's Class: {topic} — {course_name}"
-                    email_html_body = f"""
-                    <html><body><div style="font-family: sans-serif;">
-                        <p>Hi {student_name},</p>
-                        <p>Your class for <strong>{course_name}</strong> on "<strong>{topic}</strong>" is today.</p>
-                        <p><strong>Your access code:</strong> <code style="font-size: 1.3em;">{access_code}</code></p>
-                        <p><a href="{access_link}">Click here to start your lesson</a></p>
-                        <p>This link is valid for {LINK_VALIDITY_HOURS} hours.</p>
-                        <p>— AI Tutor System</p>
-                    </div></body></html>
-                    """
-
-                    send_email_notification(student_email, email_subject, email_html_body, student_name)
-
-        except Exception as e:
-            print(f"SCHEDULER: Error processing {config_file.name}: {e}\n{traceback.format_exc()}")
+                lesson_date = datetime.strptime(lesson["date"], '%Y-%m-%d').date()
+                if lesson_date == today_utc:
+                    print(f"SCHEDULER: Class found for {course_name} today: Lesson {lesson['lesson_number']}")
+                    class_code = generate_5_digit_code() # This code isn't used in the current email template for link access
+                    for student in cfg["students"]:
+                        student_id, student_email, student_name = student.get("id", "unknown"), student.get("email"), student.get("name", "Student")
+                        if not student_email: continue
+                        token, access_code = generate_access_token(student_id, course_id, lesson["lesson_number"], lesson_date)
+                        access_link = f"{APP_DOMAIN}/class?token={token}" # Use token[0] which is the JWT string
+                        email_subject = f"Today's Class Link for {course_name}: {lesson['topic_summary']}"
+                        email_html_body = f"""
+                        <html><head><style>body {{font-family: sans-serif;}} strong {{color: #007bff;}} a {{color: #0056b3;}} .container {{padding: 20px; border: 1px solid #ddd; border-radius: 5px;}} .code {{font-size: 1.5em; font-weight: bold; background-color: #f0f0f0; padding: 5px 10px;}}</style></head>
+                        <body><div class="container">
+                            <p>Hi {student_name},</p>
+                            <p>Your class for <strong>{course_name}</strong> - "{lesson['topic_summary']}" - is today!</p>
+                            <p><strong>Your access code is:</strong> <span class="code">{access_code}</span></p>
+                            <p>Access link: <a href="{access_link}">{access_link}</a></p>
+                            <p>The link and code are valid for {LINK_VALIDITY_HOURS} hours from generation, typically covering morning to early afternoon UTC on {today_utc.strftime('%B %d, %Y')}.</p>
+                            <p>Best regards,<br>AI Tutor System</p>
+                        </div></body></html>"""
+                        send_email_notification(student_email, email_subject, email_html_body, student_name) # from_name should be student_name if you want Reply-To to be student
+        except Exception as e: print(f"SCHEDULER: Error in daily reminders for {config_file.name}: {e}\n{traceback.format_exc()}")
 
 def log_student_progress(student_id, course_id, lesson_id, quiz_score_str, session_duration_secs, engagement_notes="N/A"):
     if not PROGRESS_LOG_FILE.exists():
@@ -493,15 +472,8 @@ def save_setup(course_name, instr_name, instr_email, devices, pdf_file, sy, sm, 
         objs = [ln.strip(" -•*") for ln in r2.choices[0].message.content.splitlines() if ln.strip()]
         parsed_students = [{"id": str(uuid.uuid4()), "name": n.strip(), "email": e.strip()} for ln in students_input_str.splitlines() if ',' in ln for n, e in [ln.split(',', 1)]]
         cfg = {"course_name": course_name, "instructor": {"name": instr_name, "email": instr_email}, "class_days": class_days_selected, "start_date": f"{sy}-{sm}-{sd_day}", "end_date": f"{ey}-{em}-{ed_day}", "allowed_devices": devices, "students": parsed_students, "sections_for_description": sections_for_desc_obj, "full_text_content": full_pdf_text, "char_offset_page_map": char_offset_to_page_map, "course_description": desc, "learning_objectives": objs, "lessons": [], "lesson_plan_formatted": ""}
-        # Generate lessons and plan right after setup
-        formatted_plan_str, structured_lessons_list = generate_plan_by_week_structured_and_formatted(cfg)
-        cfg["lessons"] = structured_lessons_list
-        cfg["lesson_plan_formatted"] = formatted_plan_str
-        
-        # Save config to disk with topics included
         path = CONFIG_DIR / f"{course_name.replace(' ','_').lower()}_config.json"
         path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-        
         syllabus_text = generate_syllabus(cfg)
         return (gr.update(value=syllabus_text, visible=True, interactive=False), gr.update(visible=False), None, gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=True), gr.update(value="", visible=False), gr.update(visible=False), gr.update(visible=True, value=course_name))
     except openai.APIError as oai_err: print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}"); return error_return_tuple(f"⚠️ OpenAI API Error: {oai_err}.")
@@ -820,118 +792,81 @@ def build_student_tutor_ui():
 
         # --- UI Header ---
         gr.Markdown("## Easy AI Tutor - Interactive Lesson")
-        # --- Decode token and load context ---
-               # In decode_context function:
+
+        # --- Student Input and Output Interface ---
+        with gr.Row():
+            with gr.Column(scale=1):
+                st_voice_dropdown = gr.Dropdown(choices=["alloy", "echo", "fable", "nova", "onyx", "shimmer"], value="nova", label="Tutor Voice")
+                st_mic_input = gr.Audio(sources=["microphone"], type="filepath", label="🎤 Record your answer")
+                st_text_input = gr.Textbox(label="💬 Or type your response", placeholder="Type here...")
+                st_send_button = gr.Button("Send", variant="primary")
+            with gr.Column(scale=3):
+                st_chatbot = gr.Chatbot(label="Lesson Conversation", height=500, bubble_full_width=False)
+                st_audio_out = gr.Audio(type="filepath", autoplay=True, label="🎧 Tutor’s Voice")
+
+        # --- Extract token from query ---
+        def grab_token(request: gr.Request):
+            return request.query_params.get("token")
+
+        student_demo.load(fn=grab_token, inputs=[], outputs=[token_state])
 
         # --- Decode token and load context ---
         def decode_context(token, request: gr.Request):
-            code_from_url = request.query_params.get("code")
-            code_from_token = ""
-        
+            if not token:
+                return "Unknown Course", "N/A", "Unknown Student", "Error: No Token", "Please ensure you accessed this page via a valid link."
+
             try:
                 payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
                 code_from_token = payload.get("code")
-        
-                if not code_from_url or code_from_token != code_from_url:
-                    raise ValueError("Access code mismatch. Access denied.") # This will be caught by the except below
-        
+                code_from_url = request.query_params.get("code")
+
+                if code_from_token != code_from_url:
+                    return "N/A", "N/A", "N/A", "Error: Code Mismatch", "Access code mismatch. Please recheck the link or code."
+
                 course_id = payload["course_id"]
                 student_id = payload["sub"]
-                lesson_id_from_token = int(payload["lesson_id"]) # Renamed to avoid conflict with Gradio state name
-        
+                lesson_id = int(payload["lesson_id"])
+
                 cfg_path = CONFIG_DIR / f"{course_id}_config.json"
                 if not cfg_path.exists():
-                    # Return course_id, lesson_id, student_id, error_topic, error_detail
-                    return course_id, lesson_id_from_token, student_id, "Error: Course Config Missing", f"Configuration file for course '{course_id}' not found."
-        
+                    return course_id, lesson_id, student_id, "Error: Course Config Missing", "No config file found for this course."
+
                 cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
                 lessons = cfg.get("lessons", [])
                 full_text = cfg.get("full_text_content", "")
-        
-                # Lesson indexing is 0-based from the list, but lesson_id in token might be 1-based.
-                # The JSON 'lesson_number' is 1-based. Let's assume lesson_id_from_token is 1-based lesson_number.
-                # Find the lesson by lesson_number.
-                actual_lesson_obj = None
-                for lesson_item in lessons:
-                    if lesson_item.get("lesson_number") == lesson_id_from_token:
-                        actual_lesson_obj = lesson_item
-                        break
-                
-                if not actual_lesson_obj:
-                    return course_id, lesson_id_from_token, student_id, "Error: Lesson Invalid", f"Lesson ID {lesson_id_from_token} not found in course {course_id}."
-        
-                topic_summary_for_state = actual_lesson_obj.get("topic_summary", f"Lesson {lesson_id_from_token} - Topic Undefined")
-                # For segment, we ideally need the specific text for this lesson.
-                # The generate_plan_by_week_structured_and_formatted function calculates `seg_starts`
-                # which are character offsets. This info isn't directly saved to use here.
-                # For now, passing full_text is what the code did, and generate_student_system_prompt truncates it.
-                # A more advanced solution would involve storing/retrieving the exact segment.
-                lesson_segment_for_state = full_text # Or ideally, the specific segment for actual_lesson_obj
-                
-                return course_id, lesson_id_from_token, student_id, topic_summary_for_state, lesson_segment_for_state
-                
-            except ValueError as ve: # Catch the specific "Access code mismatch"
-                 return "N/A", "N/A", "N/A", "Error: Invalid Code", str(ve)
+
+                if lesson_id <= 0 or lesson_id > len(lessons):
+                    return course_id, lesson_id, student_id, "Error: Lesson Invalid", "Lesson ID is out of range."
+
+                lesson = lessons[lesson_id - 1]
+                topic = lesson.get("topic_summary", f"Lesson {lesson_id}")
+
+                chars_per_lesson = len(full_text) // len(lessons) if full_text else 0
+                start = (lesson_id - 1) * chars_per_lesson
+                end = start + chars_per_lesson
+                segment = full_text[start:end].strip() if full_text else "(No content for this lesson)"
+
+                return course_id, lesson_id, student_id, topic, segment
+
             except jwt.ExpiredSignatureError:
-                return "N/A", "N/A", "N/A", "Error: Token Expired", "Your access link has expired."
+                return "N/A", "N/A", "N/A", "Error: Expired", "This link has expired."
             except jwt.InvalidTokenError as e:
-                return "N/A", "N/A", "N/A", "Error: Invalid Token", f"Invalid access link: {str(e)}"
-            except Exception as e: # Catch any other errors during decoding or file loading
-                print(f"Error in decode_context: {e}\n{traceback.format_exc()}")
-                return "N/A", "N/A", "N/A", "Error: System Issue", "A system error occurred while validating your access."
-        
-            course_id = payload["course_id"]
-            student_id = payload["sub"]
-            lesson_id = int(payload["lesson_id"])
-        
-            cfg_path = CONFIG_DIR / f"{course_id}_config.json"
-            if not cfg_path.exists():
-                return course_id, lesson_id, student_id, "Error: Course Config Missing", "No config file found for this course."
-        
-            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-            lessons = cfg.get("lessons", [])
-            full_text = cfg.get("full_text_content", "")
-        
-            if lesson_id < 0 or lesson_id >= len(lessons):
-                return course_id, lesson_id, student_id, "Error: Lesson Invalid", "Lesson ID is out of range."
-        
-            return course_id, lesson_id, student_id, lessons[lesson_id], full_text
-        
-                # --- Student Input and Output Interface ---
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        st_voice_dropdown = gr.Dropdown(choices=["alloy", "echo", "fable", "nova", "onyx", "shimmer"], value="nova", label="Tutor Voice")
-                        st_mic_input = gr.Audio(sources=["microphone"], type="filepath", label="🎤 Record your answer")
-                        st_text_input = gr.Textbox(label="💬 Or type your response", placeholder="Type here...")
-                        st_send_button = gr.Button("Send", variant="primary")
-                    with gr.Column(scale=3):
-                        st_chatbot = gr.Chatbot(label="Lesson Conversation", height=500, bubble_full_width=False)
-                        st_audio_out = gr.Audio(type="filepath", autoplay=True, label="🎧 Tutor’s Voice")
-        
-                    # --- Extract token from query ---
-                    def grab_token(request: gr.Request):
-                        return request.query_params.get("token")
-                
-                    # 1) grab the raw JWT from the URL
-                    student_demo.load(
-                        fn=grab_token,
-                        inputs=[],
-                        outputs=[token_state]
-                    )
-                
-                    # 2) decode the token (and validate the 5-digit code) to populate our states
-                    student_demo.load(
-                        fn=decode_context,
-                        inputs=[token_state, gr.Request],
-                        outputs=[
-                            course_id_state,
-                            lesson_id_state,
-                            student_id_state,
-                            lesson_topic_state,
-                            lesson_segment_state
-                        ],
-                        queue=False  # ensure this runs after grab_token
-                    )
+                return "N/A", "N/A", "N/A", "Error: Invalid Token", f"Invalid token: {e}"
+            except Exception as e:
+                return "N/A", "N/A", "N/A", "Error: Unknown", f"Unexpected error: {e}"
+
+        student_demo.load(
+            fn=decode_context,
+            inputs=[token_state],
+            outputs=[
+                course_id_state,
+                lesson_id_state,
+                student_id_state,
+                lesson_topic_state,
+                lesson_segment_state
+            ]
+        )
+
 
         # --- Initial tutor message ---
         # In build_student_tutor_ui() function:
@@ -939,27 +874,26 @@ def build_student_tutor_ui():
         # --- Initial tutor message ---
         # Add lesson_id to function arguments
         def tutor_greeter(current_lesson_topic, current_lesson_segment, current_lesson_id):
-            display_topic = ""
+            display_topic = "" # This will hold the topic string for the prompt
+
             lesson_id_str = str(current_lesson_id) if current_lesson_id is not None else "the current"
 
             if isinstance(current_lesson_topic, str) and current_lesson_topic.strip():
+                # Topic is a non-empty string
                 stripped_topic = current_lesson_topic.strip()
                 if stripped_topic.startswith("Error:") or stripped_topic.startswith("Unknown Course") or stripped_topic.startswith("Unknown Student"):
-                    # --- SOLUTION FOR ISSUE 1 ---
-                    # current_lesson_segment contains the detailed error message from decode_context
-                    error_message_for_student = f"Access Denied: {current_lesson_segment if isinstance(current_lesson_segment, str) else 'Please check your access code and try again.'}"
-                    initial_display_history = [[None, error_message_for_student]]
-                    # No AI call, no system prompt needed if we are in an error state.
-                    initial_chat_history = [] 
-                    return initial_display_history, initial_chat_history, "error_state", 0, 0, None, datetime.now(dt_timezone.utc)
-                    # --- END SOLUTION FOR ISSUE 1 ---
+                    # It's an error message from decode_context
+                    display_topic = f"Lesson {lesson_id_str}: We're experiencing a technical difficulty loading lesson details ({stripped_topic}). Let's proceed with a general discussion."
                 else:
+                    # It's a valid topic
                     display_topic = stripped_topic
-            else: # This branch will now only be hit if topic is genuinely unavailable but token was valid
+            else:
+                # Topic is None, empty, not a string, or just whitespace
                 display_topic = f"Lesson {lesson_id_str} (Specific topic details are currently unavailable)"
 
             # Ensure segment is a string, default to empty if not
             current_lesson_segment = current_lesson_segment if isinstance(current_lesson_segment, str) else ""
+
             prompt = generate_student_system_prompt("initial_greeting", "", display_topic, current_lesson_segment)
             
             audio_fp_str = None # Default for audio path
@@ -1014,27 +948,16 @@ def build_student_tutor_ui():
 
         # Update the student_demo.load call for tutor_greeter to include lesson_id_state
         student_demo.load(fn=tutor_greeter,
-            inputs=[lesson_topic_state, lesson_segment_state, lesson_id_state],
-            outputs=[
-                st_chatbot,          # ← Chatbot gets the display history
-                st_chat_history,     # ← internal history
-                st_session_mode,
-                st_turn_count,
-                st_teaching_turns,
-                st_audio_out,
-                st_session_start
-            ],
-            queue=False
-        )
+                          inputs=[lesson_topic_state, lesson_segment_state, lesson_id_state], # Added lesson_id_state
+                          outputs=[
+                              st_display_history, st_chat_history, st_session_mode, st_turn_count,
+                              st_teaching_turns, st_audio_out, st_session_start
+                          ])
+
 
         # --- Processing student response ---
         def handle_response(mic_path, text, chat_hist, disp_hist, profile, mode, turns, teaching_turns, voice,
-                    sid, cid, lid, topic, segment, start_time):
-            # Ensure histories are always lists, never None
-            if disp_hist is None:
-                disp_hist = []
-            if chat_hist is None:
-                chat_hist = []
+                            sid, cid, lid, topic, segment, start_time):
             input_text = text.strip() if text else ""
             if mic_path:
                 try:
@@ -1094,11 +1017,10 @@ def build_student_tutor_ui():
                 return disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, gr.update(value=None), gr.update(value="")
 
         event_inputs = [
-            st_mic_input, st_text_input, st_chat_history, st_chatbot, st_student_profile,
+            st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile,
             st_session_mode, st_turn_count, st_teaching_turns, st_voice_dropdown,
             student_id_state, course_id_state, lesson_id_state, lesson_topic_state, lesson_segment_state, st_session_start
         ]
-
         event_outputs = [
             st_chatbot, st_chat_history, st_student_profile, st_session_mode,
             st_turn_count, st_teaching_turns, st_audio_out, st_mic_input, st_text_input
