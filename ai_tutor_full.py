@@ -1014,16 +1014,27 @@ def build_student_tutor_ui():
 
         # Update the student_demo.load call for tutor_greeter to include lesson_id_state
         student_demo.load(fn=tutor_greeter,
-                          inputs=[lesson_topic_state, lesson_segment_state, lesson_id_state], # Added lesson_id_state
-                          outputs=[
-                              st_display_history, st_chat_history, st_session_mode, st_turn_count,
-                              st_teaching_turns, st_audio_out, st_session_start
-                          ])
-
+            inputs=[lesson_topic_state, lesson_segment_state, lesson_id_state],
+            outputs=[
+                st_chatbot,          # ← Chatbot gets the display history
+                st_chat_history,     # ← internal history
+                st_session_mode,
+                st_turn_count,
+                st_teaching_turns,
+                st_audio_out,
+                st_session_start
+            ],
+            queue=False
+        )
 
         # --- Processing student response ---
         def handle_response(mic_path, text, chat_hist, disp_hist, profile, mode, turns, teaching_turns, voice,
-                            sid, cid, lid, topic, segment, start_time):
+                    sid, cid, lid, topic, segment, start_time):
+            # Ensure histories are always lists, never None
+            if disp_hist is None:
+                disp_hist = []
+            if chat_hist is None:
+                chat_hist = []
             input_text = text.strip() if text else ""
             if mic_path:
                 try:
@@ -1083,10 +1094,11 @@ def build_student_tutor_ui():
                 return disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, gr.update(value=None), gr.update(value="")
 
         event_inputs = [
-            st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile,
+            st_mic_input, st_text_input, st_chat_history, st_chatbot, st_student_profile,
             st_session_mode, st_turn_count, st_teaching_turns, st_voice_dropdown,
             student_id_state, course_id_state, lesson_id_state, lesson_topic_state, lesson_segment_state, st_session_start
         ]
+
         event_outputs = [
             st_chatbot, st_chat_history, st_student_profile, st_session_mode,
             st_turn_count, st_teaching_turns, st_audio_out, st_mic_input, st_text_input
