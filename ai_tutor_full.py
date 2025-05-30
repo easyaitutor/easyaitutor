@@ -823,115 +823,115 @@ def build_student_tutor_ui():
         # --- Decode token and load context ---
                # In decode_context function:
 
-# --- Decode token and load context ---
-def decode_context(token, request: gr.Request):
-    code_from_url = request.query_params.get("code")
-    code_from_token = ""
-
-    try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
-        code_from_token = payload.get("code")
-
-        if not code_from_url or code_from_token != code_from_url:
-            raise ValueError("Access code mismatch. Access denied.") # This will be caught by the except below
-
-        course_id = payload["course_id"]
-        student_id = payload["sub"]
-        lesson_id_from_token = int(payload["lesson_id"]) # Renamed to avoid conflict with Gradio state name
-
-        cfg_path = CONFIG_DIR / f"{course_id}_config.json"
-        if not cfg_path.exists():
-            # Return course_id, lesson_id, student_id, error_topic, error_detail
-            return course_id, lesson_id_from_token, student_id, "Error: Course Config Missing", f"Configuration file for course '{course_id}' not found."
-
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        lessons = cfg.get("lessons", [])
-        full_text = cfg.get("full_text_content", "")
-
-        # Lesson indexing is 0-based from the list, but lesson_id in token might be 1-based.
-        # The JSON 'lesson_number' is 1-based. Let's assume lesson_id_from_token is 1-based lesson_number.
-        # Find the lesson by lesson_number.
-        actual_lesson_obj = None
-        for lesson_item in lessons:
-            if lesson_item.get("lesson_number") == lesson_id_from_token:
-                actual_lesson_obj = lesson_item
-                break
+        # --- Decode token and load context ---
+        def decode_context(token, request: gr.Request):
+            code_from_url = request.query_params.get("code")
+            code_from_token = ""
         
-        if not actual_lesson_obj:
-            return course_id, lesson_id_from_token, student_id, "Error: Lesson Invalid", f"Lesson ID {lesson_id_from_token} not found in course {course_id}."
-
-        topic_summary_for_state = actual_lesson_obj.get("topic_summary", f"Lesson {lesson_id_from_token} - Topic Undefined")
-        # For segment, we ideally need the specific text for this lesson.
-        # The generate_plan_by_week_structured_and_formatted function calculates `seg_starts`
-        # which are character offsets. This info isn't directly saved to use here.
-        # For now, passing full_text is what the code did, and generate_student_system_prompt truncates it.
-        # A more advanced solution would involve storing/retrieving the exact segment.
-        lesson_segment_for_state = full_text # Or ideally, the specific segment for actual_lesson_obj
+            try:
+                payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
+                code_from_token = payload.get("code")
         
-        return course_id, lesson_id_from_token, student_id, topic_summary_for_state, lesson_segment_for_state
+                if not code_from_url or code_from_token != code_from_url:
+                    raise ValueError("Access code mismatch. Access denied.") # This will be caught by the except below
         
-    except ValueError as ve: # Catch the specific "Access code mismatch"
-         return "N/A", "N/A", "N/A", "Error: Invalid Code", str(ve)
-    except jwt.ExpiredSignatureError:
-        return "N/A", "N/A", "N/A", "Error: Token Expired", "Your access link has expired."
-    except jwt.InvalidTokenError as e:
-        return "N/A", "N/A", "N/A", "Error: Invalid Token", f"Invalid access link: {str(e)}"
-    except Exception as e: # Catch any other errors during decoding or file loading
-        print(f"Error in decode_context: {e}\n{traceback.format_exc()}")
-        return "N/A", "N/A", "N/A", "Error: System Issue", "A system error occurred while validating your access."
-
-    course_id = payload["course_id"]
-    student_id = payload["sub"]
-    lesson_id = int(payload["lesson_id"])
-
-    cfg_path = CONFIG_DIR / f"{course_id}_config.json"
-    if not cfg_path.exists():
-        return course_id, lesson_id, student_id, "Error: Course Config Missing", "No config file found for this course."
-
-    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    lessons = cfg.get("lessons", [])
-    full_text = cfg.get("full_text_content", "")
-
-    if lesson_id < 0 or lesson_id >= len(lessons):
-        return course_id, lesson_id, student_id, "Error: Lesson Invalid", "Lesson ID is out of range."
-
-    return course_id, lesson_id, student_id, lessons[lesson_id], full_text
-
-        # --- Student Input and Output Interface ---
-        with gr.Row():
-            with gr.Column(scale=1):
-                st_voice_dropdown = gr.Dropdown(choices=["alloy", "echo", "fable", "nova", "onyx", "shimmer"], value="nova", label="Tutor Voice")
-                st_mic_input = gr.Audio(sources=["microphone"], type="filepath", label="🎤 Record your answer")
-                st_text_input = gr.Textbox(label="💬 Or type your response", placeholder="Type here...")
-                st_send_button = gr.Button("Send", variant="primary")
-            with gr.Column(scale=3):
-                st_chatbot = gr.Chatbot(label="Lesson Conversation", height=500, bubble_full_width=False)
-                st_audio_out = gr.Audio(type="filepath", autoplay=True, label="🎧 Tutor’s Voice")
-
-            # --- Extract token from query ---
-            def grab_token(request: gr.Request):
-                return request.query_params.get("token")
+                course_id = payload["course_id"]
+                student_id = payload["sub"]
+                lesson_id_from_token = int(payload["lesson_id"]) # Renamed to avoid conflict with Gradio state name
         
-            # 1) grab the raw JWT from the URL
-            student_demo.load(
-                fn=grab_token,
-                inputs=[],
-                outputs=[token_state]
-            )
+                cfg_path = CONFIG_DIR / f"{course_id}_config.json"
+                if not cfg_path.exists():
+                    # Return course_id, lesson_id, student_id, error_topic, error_detail
+                    return course_id, lesson_id_from_token, student_id, "Error: Course Config Missing", f"Configuration file for course '{course_id}' not found."
         
-            # 2) decode the token (and validate the 5-digit code) to populate our states
-            student_demo.load(
-                fn=decode_context,
-                inputs=[token_state, gr.Request],
-                outputs=[
-                    course_id_state,
-                    lesson_id_state,
-                    student_id_state,
-                    lesson_topic_state,
-                    lesson_segment_state
-                ],
-                queue=False  # ensure this runs after grab_token
-            )
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                lessons = cfg.get("lessons", [])
+                full_text = cfg.get("full_text_content", "")
+        
+                # Lesson indexing is 0-based from the list, but lesson_id in token might be 1-based.
+                # The JSON 'lesson_number' is 1-based. Let's assume lesson_id_from_token is 1-based lesson_number.
+                # Find the lesson by lesson_number.
+                actual_lesson_obj = None
+                for lesson_item in lessons:
+                    if lesson_item.get("lesson_number") == lesson_id_from_token:
+                        actual_lesson_obj = lesson_item
+                        break
+                
+                if not actual_lesson_obj:
+                    return course_id, lesson_id_from_token, student_id, "Error: Lesson Invalid", f"Lesson ID {lesson_id_from_token} not found in course {course_id}."
+        
+                topic_summary_for_state = actual_lesson_obj.get("topic_summary", f"Lesson {lesson_id_from_token} - Topic Undefined")
+                # For segment, we ideally need the specific text for this lesson.
+                # The generate_plan_by_week_structured_and_formatted function calculates `seg_starts`
+                # which are character offsets. This info isn't directly saved to use here.
+                # For now, passing full_text is what the code did, and generate_student_system_prompt truncates it.
+                # A more advanced solution would involve storing/retrieving the exact segment.
+                lesson_segment_for_state = full_text # Or ideally, the specific segment for actual_lesson_obj
+                
+                return course_id, lesson_id_from_token, student_id, topic_summary_for_state, lesson_segment_for_state
+                
+            except ValueError as ve: # Catch the specific "Access code mismatch"
+                 return "N/A", "N/A", "N/A", "Error: Invalid Code", str(ve)
+            except jwt.ExpiredSignatureError:
+                return "N/A", "N/A", "N/A", "Error: Token Expired", "Your access link has expired."
+            except jwt.InvalidTokenError as e:
+                return "N/A", "N/A", "N/A", "Error: Invalid Token", f"Invalid access link: {str(e)}"
+            except Exception as e: # Catch any other errors during decoding or file loading
+                print(f"Error in decode_context: {e}\n{traceback.format_exc()}")
+                return "N/A", "N/A", "N/A", "Error: System Issue", "A system error occurred while validating your access."
+        
+            course_id = payload["course_id"]
+            student_id = payload["sub"]
+            lesson_id = int(payload["lesson_id"])
+        
+            cfg_path = CONFIG_DIR / f"{course_id}_config.json"
+            if not cfg_path.exists():
+                return course_id, lesson_id, student_id, "Error: Course Config Missing", "No config file found for this course."
+        
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            lessons = cfg.get("lessons", [])
+            full_text = cfg.get("full_text_content", "")
+        
+            if lesson_id < 0 or lesson_id >= len(lessons):
+                return course_id, lesson_id, student_id, "Error: Lesson Invalid", "Lesson ID is out of range."
+        
+            return course_id, lesson_id, student_id, lessons[lesson_id], full_text
+        
+                # --- Student Input and Output Interface ---
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        st_voice_dropdown = gr.Dropdown(choices=["alloy", "echo", "fable", "nova", "onyx", "shimmer"], value="nova", label="Tutor Voice")
+                        st_mic_input = gr.Audio(sources=["microphone"], type="filepath", label="🎤 Record your answer")
+                        st_text_input = gr.Textbox(label="💬 Or type your response", placeholder="Type here...")
+                        st_send_button = gr.Button("Send", variant="primary")
+                    with gr.Column(scale=3):
+                        st_chatbot = gr.Chatbot(label="Lesson Conversation", height=500, bubble_full_width=False)
+                        st_audio_out = gr.Audio(type="filepath", autoplay=True, label="🎧 Tutor’s Voice")
+        
+                    # --- Extract token from query ---
+                    def grab_token(request: gr.Request):
+                        return request.query_params.get("token")
+                
+                    # 1) grab the raw JWT from the URL
+                    student_demo.load(
+                        fn=grab_token,
+                        inputs=[],
+                        outputs=[token_state]
+                    )
+                
+                    # 2) decode the token (and validate the 5-digit code) to populate our states
+                    student_demo.load(
+                        fn=decode_context,
+                        inputs=[token_state, gr.Request],
+                        outputs=[
+                            course_id_state,
+                            lesson_id_state,
+                            student_id_state,
+                            lesson_topic_state,
+                            lesson_segment_state
+                        ],
+                        queue=False  # ensure this runs after grab_token
+                    )
 
         # --- Initial tutor message ---
         # In build_student_tutor_ui() function:
