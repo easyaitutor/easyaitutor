@@ -1,6 +1,6 @@
 from pathlib import Path
 from dotenv import load_dotenv
-import os, io, json, traceback, re, uuid, random, mimetypes, csv
+import os, io, json, traceback, re, uuid, random, mimetypes, string, csv
 from datetime import date, datetime, timedelta, timezone as dt_timezone
 import openai
 import gradio as gr
