@@ -826,15 +826,6 @@ def build_student_tutor_ui():
                 course_id = payload["course_id"]
                 student_id = payload["sub"]
                 lesson_id = int(payload["lesson_id"])
-                current_topic   = None
-                current_segment = None
-                try:
-                    lesson_cfg      = cfg["lessons"][lesson_id - 1]          # zero-based list
-                    current_topic   = lesson_cfg.get("topic_summary") or lesson_cfg.get("topic")
-                    current_segment = lesson_cfg.get("segment_title")
-                except Exception as exc:
-                    current_topic = f"Error: cannot load topic ({exc})"
-
                 cfg_path = CONFIG_DIR / f"{course_id}_config.json"
                 if not cfg_path.exists():
                     return course_id, lesson_id, student_id, "Error: Course Config Missing", "No config file found for this course."
@@ -842,12 +833,15 @@ def build_student_tutor_ui():
                 cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
                 lessons = cfg.get("lessons", [])
                 full_text = cfg.get("full_text_content", "")
+                current_topic   = None
+                current_segment = None
 
                 if lesson_id <= 0 or lesson_id > len(lessons):
                     return course_id, lesson_id, student_id, "Error: Lesson Invalid", "Lesson ID is out of range."
 
-                lesson = lessons[lesson_id - 1]
-                topic = lesson.get("topic_summary", f"Lesson {lesson_id}")
+                lesson          = lessons[lesson_id - 1]
+                current_topic   = lesson.get("topic_summary") or lesson.get("topic")
+                current_segment = lesson.get("segment_title")
 
                 chars_per_lesson = len(full_text) // len(lessons) if full_text else 0
                 start = (lesson_id - 1) * chars_per_lesson
