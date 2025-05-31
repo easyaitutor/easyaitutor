@@ -56,7 +56,7 @@ STUDENT_TEACHING_TURNS_PER_BREAK = 5
 STUDENT_INTEREST_BREAK_TURNS = 1
 STUDENT_QUIZ_AFTER_TURNS = 7
 STUDENT_MAX_SESSION_TURNS = 20
-STUDENT_UI_PATH = "/student_tutor_interface" # Used for mounting and redirect
+STUDENT_UI_PATH = "/student_tutor_interface/ui" # Used for mounting and redirect
 
 EASYAI_TUTOR_PROGRESS_API_ENDPOINT = os.getenv("EASYAI_TUTOR_PROGRESS_API_ENDPOINT") # Less used now
 
@@ -1053,11 +1053,12 @@ async def verify_access(request: Request, token: str = None):
     <html><head><title>Access Verification</title></head>
     <body style="font-family:sans-serif; margin:50px;">
         <h2>Enter Your Access Code</h2>
-        <form method="get" action="/student_tutor_interface/">
+        <form method="get" action="/class/enter">
             <input type="hidden" name="token" value="{token}">
-            <input type="text" name="code" placeholder="5-digit code" name="code" required>
+            <input type="text" name="code" placeholder="5-digit code" required>
             <button type="submit">Continue</button>
         </form>
+
 
     </body>
     </html>
@@ -1093,6 +1094,36 @@ async def get_student_lesson_page(request: Request, token: str = None): # token 
         print(f"Error processing /class request: {e}\n{traceback.format_exc()}")
         return HTMLResponse(f"<h3>Error preparing lesson.</h3><p>An unexpected error occurred: {str(e)}. Please try again later or contact support.</p>", status_code=500)
 
+# ─── Final gate: token + code must match ────────────────────────────────────
+@app.get("/class/enter", response_class=RedirectResponse)
+async def enter_class(token: str, code: str):
+    """
+    Last check before we let the student see the Gradio UI:
+    1. JWT must be valid (signature, expiry, audience)
+    2. 5-digit code in the URL must match the one stored in the token
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[ALGORITHM],
+            audience=APP_DOMAIN
+        )
+
+        if payload.get("code") != code:
+            return HTMLResponse("<h3>Wrong access code.</h3>", status_code=401)
+
+        # Everything checks out → hand off to the real UI
+        return RedirectResponse(
+            url=f"{STUDENT_UI_PATH}?token={token}&code={code}"
+        )
+
+    except jwt.ExpiredSignatureError:
+        return HTMLResponse("<h3>Link expired.</h3>", status_code=401)
+    except jwt.InvalidTokenError:
+        return HTMLResponse("<h3>Invalid link.</h3>", status_code=401)
+    except Exception as e:
+        return HTMLResponse(f"<h3>Unexpected error: {e}</h3>", status_code=500)
 
 @app.on_event("startup")
 async def startup_event():
