@@ -826,6 +826,14 @@ def build_student_tutor_ui():
                 course_id = payload["course_id"]
                 student_id = payload["sub"]
                 lesson_id = int(payload["lesson_id"])
+                current_topic   = None
+                current_segment = None
+                try:
+                    lesson_cfg      = cfg["lessons"][lesson_id - 1]          # zero-based list
+                    current_topic   = lesson_cfg.get("topic_summary") or lesson_cfg.get("topic")
+                    current_segment = lesson_cfg.get("segment_title")
+                except Exception as exc:
+                    current_topic = f"Error: cannot load topic ({exc})"
 
                 cfg_path = CONFIG_DIR / f"{course_id}_config.json"
                 if not cfg_path.exists():
@@ -846,7 +854,7 @@ def build_student_tutor_ui():
                 end = start + chars_per_lesson
                 segment = full_text[start:end].strip() if full_text else "(No content for this lesson)"
 
-                return course_id, lesson_id, student_id, topic, segment
+                return course_id, lesson_id, student_id, current_topic, current_segment
 
             except jwt.ExpiredSignatureError:
                 return "N/A", "N/A", "N/A", "Error: Expired", "This link has expired."
@@ -874,22 +882,12 @@ def build_student_tutor_ui():
         # --- Initial tutor message ---
         # Add lesson_id to function arguments
         def tutor_greeter(current_lesson_topic, current_lesson_segment, current_lesson_id):
-            display_topic = "" # This will hold the topic string for the prompt
+            # NEW: block chat if an error bubbled up from decode_context
+            if isinstance(current_lesson_topic, str) and current_lesson_topic.startswith("Error:"):
+                return [[None, f"⚠️ {current_lesson_topic}"]], [], "error", 0, 0, None, datetime.now(dt_timezone.utc)
 
-            lesson_id_str = str(current_lesson_id) if current_lesson_id is not None else "the current"
-
-            if isinstance(current_lesson_topic, str) and current_lesson_topic.strip():
-                # Topic is a non-empty string
-                stripped_topic = current_lesson_topic.strip()
-                if stripped_topic.startswith("Error:") or stripped_topic.startswith("Unknown Course") or stripped_topic.startswith("Unknown Student"):
-                    # It's an error message from decode_context
-                    display_topic = f"Lesson {lesson_id_str}: We're experiencing a technical difficulty loading lesson details ({stripped_topic}). Let's proceed with a general discussion."
-                else:
-                    # It's a valid topic
-                    display_topic = stripped_topic
-            else:
-                # Topic is None, empty, not a string, or just whitespace
-                display_topic = f"Lesson {lesson_id_str} (Specific topic details are currently unavailable)"
+            lesson_id_str = str(current_lesson_id) if current_lesson_id is not None else "?"
+            display_topic  = current_lesson_topic or f"Lesson {lesson_id_str}"
 
             # Ensure segment is a string, default to empty if not
             current_lesson_segment = current_lesson_segment if isinstance(current_lesson_segment, str) else ""
