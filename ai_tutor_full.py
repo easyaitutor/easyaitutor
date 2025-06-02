@@ -812,50 +812,100 @@ def build_student_tutor_ui():
 
         # --- Decode token and load context ---
         def decode_context(token, request: gr.Request):
+            """
+            Расшифровывает JWT-токен, проверяет 5-значный код, загружает конфиг курса
+            и возвращает: course_id, lesson_id, student_id, topic, segment_title.
+            """
+        
+            # 1. Проверяем, что токен вообще передан
             if not token:
-                return "Unknown Course", "N/A", "Unknown Student", "Error: No Token", "Please ensure you accessed this page via a valid link."
-
+                return (
+                    "Unknown Course", "N/A", "Unknown Student",
+                    "Error: No Token",
+                    "Please ensure you accessed this page via a valid link."
+                )
+        
             try:
-                payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
+                # 2. Декодируем токен и сверяем код из URL
+                payload = jwt.decode(
+                    token,
+                    JWT_SECRET_KEY,
+                    algorithms=[ALGORITHM],
+                    audience=APP_DOMAIN
+                )
                 code_from_token = payload.get("code")
-                code_from_url = request.query_params.get("code")
-
+                code_from_url   = request.query_params.get("code")
+        
                 if code_from_token != code_from_url:
-                    return "N/A", "N/A", "N/A", "Error: Code Mismatch", "Access code mismatch. Please recheck the link or code."
-
-                course_id = payload["course_id"]
+                    return (
+                        "N/A", "N/A", "N/A",
+                        "Error: Code Mismatch",
+                        "Access code mismatch. Please recheck the link or code."
+                    )
+        
+                # 3. Извлекаем идентификаторы
+                course_id  = payload["course_id"]
                 student_id = payload["sub"]
-                lesson_id = int(payload["lesson_id"])
+                lesson_id  = int(payload["lesson_id"])
+        
+                # 4. Загружаем JSON-конфиг курса
                 cfg_path = CONFIG_DIR / f"{course_id}_config.json"
                 if not cfg_path.exists():
-                    return course_id, lesson_id, student_id, "Error: Course Config Missing", "No config file found for this course."
-
-                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-                lessons = cfg.get("lessons", [])
+                    return (
+                        course_id, lesson_id, student_id,
+                        "Error: Course Config Missing",
+                        "No config file found for this course."
+                    )
+        
+                cfg       = json.loads(cfg_path.read_text(encoding="utf-8"))
+                lessons   = cfg.get("lessons", [])
                 full_text = cfg.get("full_text_content", "")
-                current_topic   = None
-                current_segment = None
-
+        
+                # 5. Проверяем диапазон уроков
                 if lesson_id <= 0 or lesson_id > len(lessons):
-                    return course_id, lesson_id, student_id, "Error: Lesson Invalid", "Lesson ID is out of range."
-
-                lesson          = lessons[lesson_id - 1]
-                current_topic   = lesson.get("topic_summary") or lesson.get("topic")
-                current_segment = lesson.get("segment_title")
-
-                chars_per_lesson = len(full_text) // len(lessons) if full_text else 0
-                start = (lesson_id - 1) * chars_per_lesson
-                end = start + chars_per_lesson
-                segment = full_text[start:end].strip() if full_text else "(No content for this lesson)"
-
-                return course_id, lesson_id, student_id, current_topic, current_segment
-
+                    return (
+                        course_id, lesson_id, student_id,
+                        "Error: Lesson Invalid",
+                        "Lesson ID is out of range."
+                    )
+        
+                # 6. Определяем тему и подзаголовок сегмента
+                lesson = lessons[lesson_id - 1]
+                current_topic = (
+                    lesson.get("topic_summary")
+                    or lesson.get("topic")
+                    or f"Lesson {lesson_id}"
+                )
+                current_segment = lesson.get("segment_title") or ""
+        
+                # 7. Возвращаем данные
+                return (
+                    course_id,
+                    lesson_id,
+                    student_id,
+                    current_topic,
+                    current_segment
+                )
+        
+            # 8. Обрабатываем возможные ошибки
             except jwt.ExpiredSignatureError:
-                return "N/A", "N/A", "N/A", "Error: Expired", "This link has expired."
+                return (
+                    "N/A", "N/A", "N/A",
+                    "Error: Expired",
+                    "This link has expired."
+                )
             except jwt.InvalidTokenError as e:
-                return "N/A", "N/A", "N/A", "Error: Invalid Token", f"Invalid token: {e}"
+                return (
+                    "N/A", "N/A", "N/A",
+                    "Error: Invalid Token",
+                    f"Invalid token: {e}"
+                )
             except Exception as e:
-                return "N/A", "N/A", "N/A", "Error: Unknown", f"Unexpected error: {e}"
+                return (
+                    "N/A", "N/A", "N/A",
+                    "Error: Unknown",
+                    f"Unexpected error: {e}"
+                )
 
         student_demo.load(
             fn=decode_context,
