@@ -818,8 +818,11 @@ def build_student_tutor_ui():
             • Возвращает: course_id, lesson_id, student_id, topic, segment_title
               ─ topic никогда не пустой и всегда приведён к Title Case
             """
+            print(f"DEBUG: decode_context called. Token present: {bool(token)}, Code from URL: {request.query_params.get('code')}")
+        
             # 1) Токен должен быть
             if not token:
+                print("DEBUG: decode_context returning - No Token")
                 return (
                     "Unknown Course", "N/A", "Unknown Student",
                     "Error: No Token",
@@ -834,7 +837,9 @@ def build_student_tutor_ui():
                     algorithms=[ALGORITHM],
                     audience=APP_DOMAIN
                 )
+                print(f"DEBUG: JWT Payload decoded: {payload}")
                 if payload.get("code") != request.query_params.get("code"):
+                    print(f"DEBUG: decode_context returning - Code Mismatch. Expected {payload.get('code')}, got {request.query_params.get('code')}")
                     return (
                         "N/A", "N/A", "N/A",
                         "Error: Code Mismatch",
@@ -844,68 +849,114 @@ def build_student_tutor_ui():
                 # 3) Базовые ID
                 course_id  = payload["course_id"]
                 student_id = payload["sub"]
-                lesson_id  = int(payload["lesson_id"])
+                # Ensure lesson_id is an int, handle potential errors
+                try:
+                    lesson_id  = int(payload["lesson_id"])
+                except (ValueError, TypeError):
+                    print(f"DEBUG: decode_context returning - Lesson ID Invalid Format in payload. lesson_id: {payload.get('lesson_id')}")
+                    return (
+                        course_id, "N/A", student_id,
+                        "Error: Lesson ID Invalid Format",
+                        "Lesson ID in token is not a valid number."
+                    )
+                print(f"DEBUG: Extracted from payload - course_id: {course_id}, student_id: {student_id}, lesson_id: {lesson_id} (type: {type(lesson_id)})")
         
                 # 4) Загружаем конфиг курса
                 cfg_path = CONFIG_DIR / f"{course_id}_config.json"
+                print(f"DEBUG: Attempting to load config from: {cfg_path}")
                 if not cfg_path.exists():
+                    print(f"DEBUG: decode_context returning - Course Config Missing. Path: {cfg_path}")
                     return (
                         course_id, lesson_id, student_id,
                         "Error: Course Config Missing",
-                        "No config file found for this course."
+                        f"No config file found for this course ({course_id})."
                     )
         
                 cfg       = json.loads(cfg_path.read_text(encoding="utf-8"))
                 lessons   = cfg.get("lessons", [])
-                if lesson_id <= 0 or lesson_id > len(lessons):
+                print(f"DEBUG: Config loaded. Number of lessons found: {len(lessons)}")
+        
+                if not isinstance(lesson_id, int) or lesson_id <= 0 or lesson_id > len(lessons):
+                    print(f"DEBUG: decode_context returning - Lesson Invalid. lesson_id: {lesson_id}, num_lessons: {len(lessons)}")
                     return (
-                        course_id, lesson_id, student_id,
+                        course_id, lesson_id if isinstance(lesson_id, int) else "N/A", student_id,
                         "Error: Lesson Invalid",
-                        "Lesson ID is out of range."
+                        f"Lesson ID ({lesson_id}) is out of range or invalid for {len(lessons)} lessons."
                     )
         
                 # 5) Извлекаем тему и сегмент
-                lesson = lessons[lesson_id - 1]
+                lesson_index = lesson_id - 1
+                lesson = lessons[lesson_index]
+                print(f"DEBUG: Accessing lesson at index {lesson_index}. Lesson data: {lesson}")
+        
+                topic_summary_raw = lesson.get("topic_summary")
+                topic_raw = lesson.get("topic")
+                title_raw = lesson.get("title")
+                name_raw = lesson.get("name")
+                print(f"DEBUG: Raw topic fields - topic_summary: '{topic_summary_raw}', topic: '{topic_raw}', title: '{title_raw}', name: '{name_raw}'")
+        
                 current_topic = (
-                    lesson.get("topic_summary")    # приоритет-1
-                    or lesson.get("topic")         # приоритет-2
-                    or lesson.get("title")         # приоритет-3
-                    or lesson.get("name")          # приоритет-4
-                    or f"Lesson {lesson_id}"       # резерв
+                    topic_summary_raw
+                    or topic_raw
+                    or title_raw
+                    or name_raw
+                    # Fallback if all primary fields are empty or None
+                    or (f"Lesson {lesson_id}" if (topic_summary_raw is None and topic_raw is None and title_raw is None and name_raw is None) else None)
                 )
+                
+                if not current_topic or not current_topic.strip(): # If current_topic is None or empty string after OR chain
+                     current_topic = f"Lesson {lesson_id} (Default Topic)"
+                     print(f"DEBUG: All specific topic fields were empty/None. Using default: {current_topic}")
+        
         
                 # ► Нормализуем к Title Case («Learning Spanish Greetings»)
-                current_topic = current_topic.title()
+                # Ensure current_topic is a string before calling .title()
+                current_topic_title_cased = str(current_topic).title() if current_topic else f"Lesson {lesson_id} (Topic Processing Error)"
+                print(f"DEBUG: Final current_topic before return: '{current_topic_title_cased}'")
         
-                current_segment = lesson.get("segment_title") or ""
+                current_segment = lesson.get("segment_title") or lesson.get("original_section_title") or ""
+                print(f"DEBUG: Final current_segment before return: '{current_segment}'")
         
                 # 6) Возвращаем 5 значений
+                print(f"DEBUG: decode_context successfully returning: {(course_id, lesson_id, student_id, current_topic_title_cased, current_segment)}")
                 return (
                     course_id,
                     lesson_id,
                     student_id,
-                    current_topic,
+                    current_topic_title_cased,
                     current_segment
                 )
         
             # 7) Обработка ошибок токена
             except jwt.ExpiredSignatureError:
+                print("DEBUG: decode_context returning - ExpiredSignatureError")
                 return (
                     "N/A", "N/A", "N/A",
                     "Error: Expired",
                     "This link has expired."
                 )
             except jwt.InvalidTokenError as e:
+                print(f"DEBUG: decode_context returning - InvalidTokenError: {e}")
                 return (
                     "N/A", "N/A", "N/A",
                     "Error: Invalid Token",
                     f"Invalid token: {e}"
                 )
             except Exception as e:
+                # Try to get some context if payload was partially decoded
+                course_id_fallback = "N/A"
+                student_id_fallback = "N/A"
+                lesson_id_fallback = "N/A"
+                if 'payload' in locals() and isinstance(payload, dict):
+                    course_id_fallback = payload.get("course_id", "N/A")
+                    student_id_fallback = payload.get("sub", "N/A")
+                    lesson_id_fallback = payload.get("lesson_id", "N/A")
+        
+                print(f"DEBUG: decode_context returning - Unknown Exception: {e}, Traceback: {traceback.format_exc()}")
                 return (
-                    "N/A", "N/A", "N/A",
-                    "Error: Unknown",
-                    f"Unexpected error: {e}"
+                    course_id_fallback, lesson_id_fallback, student_id_fallback,
+                    "Error: Unknown Processing",
+                    f"Unexpected error during context decoding: {e}"
                 )
 
         decode_event = student_demo.load(
