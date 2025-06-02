@@ -813,11 +813,12 @@ def build_student_tutor_ui():
         # --- Decode token and load context ---
         def decode_context(token, request: gr.Request):
             """
-            Расшифровывает JWT-токен, проверяет 5-значный код, загружает конфиг курса
-            и возвращает: course_id, lesson_id, student_id, topic, segment_title.
+            • Декодирует JWT-токен и проверяет 5-значный код из URL
+            • Загружает конфиг курса
+            • Возвращает: course_id, lesson_id, student_id, topic, segment_title
+              ─ topic никогда не пустой и всегда приведён к Title Case
             """
-        
-            # 1. Проверяем, что токен вообще передан
+            # 1) Токен должен быть
             if not token:
                 return (
                     "Unknown Course", "N/A", "Unknown Student",
@@ -826,29 +827,26 @@ def build_student_tutor_ui():
                 )
         
             try:
-                # 2. Декодируем токен и сверяем код из URL
+                # 2) Проверяем подпись токена и код
                 payload = jwt.decode(
                     token,
                     JWT_SECRET_KEY,
                     algorithms=[ALGORITHM],
                     audience=APP_DOMAIN
                 )
-                code_from_token = payload.get("code")
-                code_from_url   = request.query_params.get("code")
-        
-                if code_from_token != code_from_url:
+                if payload.get("code") != request.query_params.get("code"):
                     return (
                         "N/A", "N/A", "N/A",
                         "Error: Code Mismatch",
                         "Access code mismatch. Please recheck the link or code."
                     )
         
-                # 3. Извлекаем идентификаторы
+                # 3) Базовые ID
                 course_id  = payload["course_id"]
                 student_id = payload["sub"]
                 lesson_id  = int(payload["lesson_id"])
         
-                # 4. Загружаем JSON-конфиг курса
+                # 4) Загружаем конфиг курса
                 cfg_path = CONFIG_DIR / f"{course_id}_config.json"
                 if not cfg_path.exists():
                     return (
@@ -859,9 +857,6 @@ def build_student_tutor_ui():
         
                 cfg       = json.loads(cfg_path.read_text(encoding="utf-8"))
                 lessons   = cfg.get("lessons", [])
-                full_text = cfg.get("full_text_content", "")
-        
-                # 5. Проверяем диапазон уроков
                 if lesson_id <= 0 or lesson_id > len(lessons):
                     return (
                         course_id, lesson_id, student_id,
@@ -869,16 +864,22 @@ def build_student_tutor_ui():
                         "Lesson ID is out of range."
                     )
         
-                # 6. Определяем тему и подзаголовок сегмента
+                # 5) Извлекаем тему и сегмент
                 lesson = lessons[lesson_id - 1]
                 current_topic = (
-                    lesson.get("topic_summary")
-                    or lesson.get("topic")
-                    or f"Lesson {lesson_id}"
+                    lesson.get("topic_summary")    # приоритет-1
+                    or lesson.get("topic")         # приоритет-2
+                    or lesson.get("title")         # приоритет-3
+                    or lesson.get("name")          # приоритет-4
+                    or f"Lesson {lesson_id}"       # резерв
                 )
+        
+                # ► Нормализуем к Title Case («Learning Spanish Greetings»)
+                current_topic = current_topic.title()
+        
                 current_segment = lesson.get("segment_title") or ""
         
-                # 7. Возвращаем данные
+                # 6) Возвращаем 5 значений
                 return (
                     course_id,
                     lesson_id,
@@ -887,7 +888,7 @@ def build_student_tutor_ui():
                     current_segment
                 )
         
-            # 8. Обрабатываем возможные ошибки
+            # 7) Обработка ошибок токена
             except jwt.ExpiredSignatureError:
                 return (
                     "N/A", "N/A", "N/A",
