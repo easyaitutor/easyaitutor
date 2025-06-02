@@ -908,7 +908,7 @@ def build_student_tutor_ui():
                     f"Unexpected error: {e}"
                 )
 
-        student_demo.load(
+        decode_event = student_demo.load(
             fn=decode_context,
             inputs=[token_state],
             outputs=[
@@ -916,8 +916,8 @@ def build_student_tutor_ui():
                 lesson_id_state,
                 student_id_state,
                 lesson_topic_state,
-                lesson_segment_state
-            ]
+                lesson_segment_state,
+            ],
         )
 
 
@@ -990,13 +990,23 @@ def build_student_tutor_ui():
             return initial_display_history, initial_chat_history, "onboarding", 0, 0, audio_fp_str, datetime.now(dt_timezone.utc)
 
         # Update the student_demo.load call for tutor_greeter to include lesson_id_state
-        student_demo.load(fn=tutor_greeter,
-                          inputs=[lesson_topic_state, lesson_segment_state, lesson_id_state], # Added lesson_id_state
-                          outputs=[
-                              st_display_history, st_chat_history, st_session_mode, st_turn_count,
-                              st_teaching_turns, st_audio_out, st_session_start
-                          ])
-
+        decode_event.then(
+            tutor_greeter,
+            inputs=[
+                lesson_topic_state,
+                lesson_segment_state,
+                lesson_id_state,
+            ],
+            outputs=[
+                st_display_history,
+                st_chat_history,
+                st_session_mode,
+                st_turn_count,
+                st_teaching_turns,
+                st_audio_out,
+                st_session_start,
+            ],
+        )
 
         # --- Processing student response ---
         def handle_response(mic_path, text, chat_hist, disp_hist, profile, mode, turns, teaching_turns, voice,
