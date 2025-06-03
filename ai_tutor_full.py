@@ -1074,8 +1074,8 @@ def build_student_tutor_ui():
             inputs=[
                 lesson_topic_state,
                 lesson_segment_state,
-                lesson_id_state,
-                gr.Request() # Add gr.Request here
+                lesson_id_state
+                # gr.Request() REMOVED FROM HERE
             ],
             outputs=[
                 st_display_history, # This will be used by st_chatbot
