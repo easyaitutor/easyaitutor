@@ -1074,8 +1074,8 @@ def build_student_tutor_ui():
             inputs=[
                 lesson_topic_state,
                 lesson_segment_state,
-                lesson_id_state
-                # gr.Request() REMOVED FROM HERE
+                lesson_id_state,
+                gr.Request() # Add gr.Request here
             ],
             outputs=[
                 st_display_history, # This will be used by st_chatbot
@@ -1090,6 +1090,7 @@ def build_student_tutor_ui():
                 st_send_button    # Add output for send button
             ],
         )
+
         # --- Processing student response ---
         def handle_response(mic_path, text, chat_hist, disp_hist, profile, mode, turns, teaching_turns, voice,
                             sid, cid, lid, topic, segment, start_time):
