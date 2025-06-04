@@ -870,6 +870,7 @@ def build_student_tutor_ui():
                         print(f"DEBUG: decode_context returning - Unknown Exception: {e}, Traceback: {traceback.format_exc()}")
                         return ( course_id_fallback, lesson_id_fallback, student_id_fallback, "Error: Unknown Processing", f"Unexpected error during context decoding: {e}" )
         
+
                 # 2) После grab_token вызываем decode_context
                 decode_event = first_event.then(
                     fn=decode_context,
@@ -882,6 +883,30 @@ def build_student_tutor_ui():
                         lesson_segment_state
                     ]
                 )
+            
+                # 3) После decode_context вызываем tutor_greeter
+                decode_event.then(
+                    fn=tutor_greeter,
+                    inputs=[
+                        lesson_topic_state,
+                        lesson_segment_state,
+                        lesson_id_state
+                        # gr.Request() автоматически
+                    ],
+                    outputs=[
+                        st_display_history,  # ← ЗДЕСЬ БЫЛО ПРОБЛЕМНОЕ МЕСТО
+                        st_chat_history,
+                        st_session_mode,
+                        st_turn_count,
+                        st_teaching_turns,
+                        st_audio_out,
+                        st_session_start,
+                        st_mic_input,
+                        st_text_input,
+                        st_send_button
+                    ]
+                )
+            
 
         # --- MODIFIED --- tutor_greeter function
         def tutor_greeter(current_lesson_topic, current_lesson_segment, current_lesson_id,
