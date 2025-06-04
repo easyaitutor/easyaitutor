@@ -740,7 +740,7 @@ def build_student_tutor_ui():
                 st_text_input = gr.Textbox(label="💬 Or type your response", placeholder="Type here...")
                 st_send_button = gr.Button("Send", variant="primary")
             with gr.Column(scale=3):
-                st_chatbot = gr.Chatbot(label="Lesson Conversation", height=500, bubble_full_width=False, value=st_display_history) # Bind value to state
+                st_chatbot = gr.Chatbot(label="Lesson Conversation", height=500, bubble_full_width=False, value=[]) # Initial value is an empty list
                 st_audio_out = gr.Audio(type="filepath", autoplay=True, label="🎧 Tutor’s Voice")
 
                 def grab_token(request: gr.Request):
@@ -886,28 +886,27 @@ def build_student_tutor_ui():
             
                 # 3) После decode_context вызываем tutor_greeter
                 decode_event.then(
-                    fn=tutor_greeter,
-                    inputs=[
-                        lesson_topic_state,
-                        lesson_segment_state,
-                        lesson_id_state
-                        # gr.Request() автоматически
-                    ],
-                    outputs=[
-                        st_display_history,  # ← ЗДЕСЬ БЫЛО ПРОБЛЕМНОЕ МЕСТО
-                        st_chat_history,
-                        st_session_mode,
-                        st_turn_count,
-                        st_teaching_turns,
-                        st_audio_out,
-                        st_session_start,
-                        st_mic_input,
-                        st_text_input,
-                        st_send_button
-                    ]
-                )
-            
-
+                fn=tutor_greeter,
+                inputs=[
+                    lesson_topic_state,
+                    lesson_segment_state,
+                    lesson_id_state
+                    # gr.Request() automatisch
+                ],
+                outputs=[
+                    st_chatbot,          # For initial display in chatbot component
+                    st_display_history,  # For the state object st_display_history
+                    st_chat_history,
+                    st_session_mode,
+                    st_turn_count,
+                    st_teaching_turns,
+                    st_audio_out,
+                    st_session_start,
+                    st_mic_input,
+                    st_text_input,
+                    st_send_button
+                ]
+            )
         # --- MODIFIED --- tutor_greeter function
         def tutor_greeter(current_lesson_topic, current_lesson_segment, current_lesson_id,
                           request: gr.Request):
@@ -962,8 +961,17 @@ def build_student_tutor_ui():
             initial_chat_history = [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg_content}]
             print(f"DEBUG: tutor_greeter successfully returning AI greeting. Message: '{msg_content[:50]}...'")
             return (
-                initial_display_history, initial_chat_history, "onboarding", 0, 0, audio_fp_str, datetime.now(dt_timezone.utc),
-                gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True)
+                initial_display_history,  # For st_chatbot
+                initial_display_history,  # For st_display_history state
+                initial_chat_history,     # For st_chat_history state
+                "onboarding",             # For st_session_mode state
+                0,                        # For st_turn_count state
+                0,                        # For st_teaching_turns state
+                audio_fp_str,             # For st_audio_out component
+                datetime.now(dt_timezone.utc), # For st_session_start state
+                gr.update(interactive=True),   # For st_mic_input component
+                gr.update(interactive=True),   # For st_text_input component
+                gr.update(interactive=True)    # For st_send_button component
             )
 
         # --- MODIFIED --- decode_event.then call (removed gr.Request() from inputs)
@@ -1067,10 +1075,34 @@ def build_student_tutor_ui():
                     f.write(speech.content)
                 # --- ADDED --- Debug print
                 print(f"DEBUG: handle_response successfully returning. Bot reply: '{bot_reply[:50]}...'")
-                return disp_hist, chat_hist, profile, mode, turns, teaching_turns, str(fp), gr.update(value=None), gr.update(value="")
+                return (
+                    disp_hist,           # For st_chatbot component
+                    disp_hist,           # For st_display_history state
+                    chat_hist,           # For st_chat_history state
+                    profile,             # For st_student_profile state
+                    mode,                # For st_session_mode state
+                    turns,               # For st_turn_count state
+                    teaching_turns,      # For st_teaching_turns state
+                    str(fp),             # For st_audio_out component
+                    gr.update(value=None), # For st_mic_input component
+                    gr.update(value="")    # For st_text_input component
+                )
             except Exception as e_tts_hr: # --- MODIFIED --- Catch specific exception
                 print(f"Error in TTS (handle_response): {e_tts_hr}")
-                return disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, gr.update(value=None), gr.update(value="")
+                # Ensure this error return also matches the new structure if it were to update the chatbot display
+                # For now, it's fine as it doesn't try to update st_chatbot directly with a state object
+                return (
+                    disp_hist, # This would be the old disp_hist if error happens before bot_reply is added
+                    disp_hist,
+                    chat_hist,
+                    profile,
+                    mode,
+                    turns,
+                    teaching_turns,
+                    None,
+                    gr.update(value=None),
+                    gr.update(value="")
+                )
 
         event_inputs = [
             st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile,
@@ -1078,10 +1110,18 @@ def build_student_tutor_ui():
             student_id_state, course_id_state, lesson_id_state, lesson_topic_state, lesson_segment_state, st_session_start
         ]
         event_outputs = [
-            st_chatbot, st_chat_history, st_student_profile, st_session_mode,
-            st_turn_count, st_teaching_turns, st_audio_out, st_mic_input, st_text_input
+            st_chatbot,           # For chatbot component
+            st_display_history,   # For st_display_history state
+            st_chat_history,      # For st_chat_history state
+            st_student_profile,   # For st_student_profile state
+            st_session_mode,      # For st_session_mode state
+            st_turn_count,        # For st_turn_count state
+            st_teaching_turns,    # For st_teaching_turns state
+            st_audio_out,         # For st_audio_out component
+            st_mic_input,         # For st_mic_input component
+            st_text_input         # For st_text_input component
         ]
-
+    
         st_mic_input.change(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
         st_text_input.submit(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
         st_send_button.click(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
