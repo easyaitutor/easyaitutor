@@ -1074,22 +1074,22 @@ def build_student_tutor_ui():
             inputs=[
                 lesson_topic_state,
                 lesson_segment_state,
-                lesson_id_state,
-                gr.Request() # Add gr.Request here
+                lesson_id_state               # ⬅ gr.Request() больше нет
             ],
             outputs=[
-                st_display_history, # This will be used by st_chatbot
+                st_display_history,  # This will be used by st_chatbot
                 st_chat_history,
                 st_session_mode,
                 st_turn_count,
                 st_teaching_turns,
                 st_audio_out,
                 st_session_start,
-                st_mic_input,     # Add output for mic
-                st_text_input,    # Add output for text input
-                st_send_button    # Add output for send button
+                st_mic_input,   # Add output for mic
+                st_text_input,  # Add output for text input
+                st_send_button  # Add output for send button
             ],
         )
+
 
         # --- Processing student response ---
         def handle_response(mic_path, text, chat_hist, disp_hist, profile, mode, turns, teaching_turns, voice,
