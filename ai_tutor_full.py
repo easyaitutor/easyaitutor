@@ -15,6 +15,8 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.templating import Jinja2Templates
 
+# --- ADDED --- Module loaded debug print
+print("DEBUG: EZAI TUTOR MODULE LOADED - VERSION FINAL_DEBUG_ATTEMPT_01")
 
 # --- Load environment variables ---
 dotenv_path = Path(__file__).parent / ".env"
@@ -44,7 +46,7 @@ days_map = {"Monday":0, "Tuesday":1, "Wednesday":2, "Thursday":3,
 
 # --- Student Tutor Configuration ---
 STUDENT_TTS_MODEL = "tts-1"
-STUDENT_CHAT_MODEL = "gpt-4o-mini"
+STUDENT_CHAT_MODEL = "gpt-4o-mini" # Changed from gpt-3.5-turbo-0125
 STUDENT_WHISPER_MODEL = "whisper-1"
 STUDENT_DEFAULT_ENGLISH_LEVEL = "B1 (Intermediate)"
 STUDENT_AUDIO_DIR = Path("student_audio_files")
@@ -181,7 +183,6 @@ def send_email_notification(to_email, subject, html_content, from_name="User", a
     msg.add_alternative(html_content, subtype='html')
     if attachment_file_obj and hasattr(attachment_file_obj, "name") and attachment_file_obj.name:
         try:
-            # If attachment_file_obj is a Gradio File object, its .name is the path
             file_path_to_read = attachment_file_obj.name
             with open(file_path_to_read, 'rb') as fp: file_data = fp.read()
             ctype, encoding = mimetypes.guess_type(file_path_to_read)
@@ -292,20 +293,21 @@ def generate_plan_by_week_structured_and_formatted(cfg):
         formatted_lines.append('')
     return "\n".join(formatted_lines), structured_lessons
 
-def generate_access_token(student_id, course_id, lesson_id, lesson_date_obj=None):
-    access_code = generate_5_digit_code()  # Add this
-    now = datetime.now(dt_timezone.utc)
-    exp = now + timedelta(hours=LINK_VALIDITY_HOURS)
-    payload = {
-        "sub": student_id,
-        "course_id": course_id,
-        "lesson_id": lesson_id,
-        "code": access_code,  # Include access code in the token payload
-        "iat": now,
-        "exp": exp,
-        "aud": APP_DOMAIN
-    }
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM), access_code
+# This function was duplicated, removing one instance.
+# def generate_access_token(student_id, course_id, lesson_id, lesson_date_obj=None):
+#     access_code = generate_5_digit_code()
+#     now = datetime.now(dt_timezone.utc)
+#     exp = now + timedelta(hours=LINK_VALIDITY_HOURS)
+#     payload = {
+#         "sub": student_id,
+#         "course_id": course_id,
+#         "lesson_id": lesson_id,
+#         "code": access_code,
+#         "iat": now,
+#         "exp": exp,
+#         "aud": APP_DOMAIN
+#     }
+#     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=ALGORITHM), access_code
 
 def send_daily_class_reminders():
     print(f"SCHEDULER: Running daily class reminder job at {datetime.now(dt_timezone.utc)}")
@@ -319,12 +321,12 @@ def send_daily_class_reminders():
                 lesson_date = datetime.strptime(lesson["date"], '%Y-%m-%d').date()
                 if lesson_date == today_utc:
                     print(f"SCHEDULER: Class found for {course_name} today: Lesson {lesson['lesson_number']}")
-                    class_code = generate_5_digit_code() # This code isn't used in the current email template for link access
+                    # class_code = generate_5_digit_code() # This code isn't used in the current email template for link access
                     for student in cfg["students"]:
                         student_id, student_email, student_name = student.get("id", "unknown"), student.get("email"), student.get("name", "Student")
                         if not student_email: continue
                         token, access_code = generate_access_token(student_id, course_id, lesson["lesson_number"], lesson_date)
-                        access_link = f"{APP_DOMAIN}/class?token={token}" # Use token[0] which is the JWT string
+                        access_link = f"{APP_DOMAIN}/class?token={token}"
                         email_subject = f"Today's Class Link for {course_name}: {lesson['topic_summary']}"
                         email_html_body = f"""
                         <html><head><style>body {{font-family: sans-serif;}} strong {{color: #007bff;}} a {{color: #0056b3;}} .container {{padding: 20px; border: 1px solid #ddd; border-radius: 5px;}} .code {{font-size: 1.5em; font-weight: bold; background-color: #f0f0f0; padding: 5px 10px;}}</style></head>
@@ -336,7 +338,7 @@ def send_daily_class_reminders():
                             <p>The link and code are valid for {LINK_VALIDITY_HOURS} hours from generation, typically covering morning to early afternoon UTC on {today_utc.strftime('%B %d, %Y')}.</p>
                             <p>Best regards,<br>AI Tutor System</p>
                         </div></body></html>"""
-                        send_email_notification(student_email, email_subject, email_html_body, student_name) # from_name should be student_name if you want Reply-To to be student
+                        send_email_notification(student_email, email_subject, email_html_body, student_name)
         except Exception as e: print(f"SCHEDULER: Error in daily reminders for {config_file.name}: {e}\n{traceback.format_exc()}")
 
 def log_student_progress(student_id, course_id, lesson_id, quiz_score_str, session_duration_secs, engagement_notes="N/A"):
@@ -498,14 +500,12 @@ def generate_plan_callback(course_name_from_input):
         if not config_path.exists():
             return error_return_for_plan(f"⚠️ Error: Config for '{course_name_from_input}' not found.")
 
-        # Load config and generate lesson plan
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
         formatted_plan_str, structured_lessons_list = generate_plan_by_week_structured_and_formatted(cfg)
         cfg["lessons"] = structured_lessons_list
         cfg["lesson_plan_formatted"] = formatted_plan_str
         config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        # ——— FIRST-DAY EMAIL LOGIC ———
         today_iso    = date.today().isoformat()
         first_lesson = cfg["lessons"][0] if cfg["lessons"] else None
         print(f"DEBUG [generate_plan]: today={today_iso}, lesson1 date={first_lesson['date'] if first_lesson else None}")
@@ -519,9 +519,7 @@ def generate_plan_callback(course_name_from_input):
                     datetime.strptime(first_lesson["date"], "%Y-%m-%d").date()
                 )
                 access_link = f"{APP_DOMAIN}/class?token={token}"
-
                 print(f"DEBUG [generate_plan]: sending email to {student_info['email']} → {access_link}")
-
                 html_body = f"""
                 <html><head><style>body {{font-family: sans-serif;}} strong {{color: #007bff;}} a {{color: #0056b3;}} .container {{padding: 20px; border: 1px solid #ddd; border-radius: 5px;}} .code {{font-size: 1.5em; font-weight: bold; background-color: #f0f0f0; padding: 5px 10px;}}</style></head>
                 <body><div class="container">
@@ -533,16 +531,13 @@ def generate_plan_callback(course_name_from_input):
                     <p>Good luck!<br>AI Tutor System</p>
                 </div></body></html>
                 """
-
                 sent = send_email_notification(
                     student_info["email"],
                     f"{cfg['course_name']} — Your Class Link for Today",
                     html_body
                 )
                 print(f"DEBUG [generate_plan]: email sent to {student_info['email']}? {sent}")
-        # ————————————————————————————————
 
-        # Build UI notification
         class_days_str = ", ".join(cfg.get("class_days", ["configured schedule"]))
         notification_message = (
             f"\n\n---\n"
@@ -567,34 +562,6 @@ def generate_plan_callback(course_name_from_input):
     except Exception as e:
         print(f"Error in generate_plan_callback: {e}\n{traceback.format_exc()}")
         return error_return_for_plan(f"⚠️ Error: {e}")
-
-
-        # Build the “lesson plan generated” message for the UI
-        class_days_str = ", ".join(cfg.get("class_days", ["configured schedule"]))
-        notification_message = (
-            f"\n\n---\n"
-            f"✅ **Lesson Plan Generated & Email System Activated for Class Days!**\n"
-            f"Students will now receive a unique link on each scheduled day ({class_days_str}), "
-            f"valid {LINK_VALIDITY_HOURS} hours from generation."
-        )
-        display_text_for_plan_box = formatted_plan_str + notification_message
-
-        return (
-            gr.update(value=display_text_for_plan_box, visible=True, interactive=False),
-            None, None,
-            gr.update(visible=False),
-            None, None,
-            gr.update(visible=True),
-            gr.update(visible=True),
-        )
-
-    except openai.APIError as oai_err:
-        print(f"OpenAI Error: {oai_err}\n{traceback.format_exc()}")
-        return error_return_for_plan(f"⚠️ OpenAI API Error: {oai_err}.")
-    except Exception as e:
-        print(f"Error in generate_plan_callback: {e}\n{traceback.format_exc()}")
-        return error_return_for_plan(f"⚠️ Error: {e}")
-
 
 def email_document_callback(course_name, doc_type, output_text_content, students_input_str):
     if not SMTP_USER or not SMTP_PASS: return gr.update(value="⚠️ Error: SMTP settings not configured.")
@@ -604,36 +571,16 @@ def email_document_callback(course_name, doc_type, output_text_content, students
         if not path.exists(): return gr.update(value=f"⚠️ Error: Config for '{course_name}' not found.")
         cfg = json.loads(path.read_text(encoding="utf-8")); instr_name, instr_email = cfg.get("instructor", {}).get("name", "Instructor"), cfg.get("instructor", {}).get("email")
         
-        # Create a temporary file-like object for the attachment
         buf, fn = download_docx(output_text_content, f"{course_name.replace(' ','_')}_{doc_type.lower()}.docx")
-        # For send_email_notification, we need to pass an object that has a .name attribute
-        # and can be opened in 'rb' mode if it's a path.
-        # Or, pass the BytesIO buffer directly if send_email_notification is adapted.
-        # Let's assume send_email_notification can handle a BytesIO object if it has a .name
-        # If not, we'd save buf to a temp file and pass that path.
-        # For simplicity with the current send_email_notification, we'll simulate a file object with .name
-        class TempFileLike:
-            def __init__(self, buffer, name):
-                self.buffer = buffer
-                self.name = name # This is the filename for the attachment
-                self.buffer.seek(0)
-            def read(self): # Mimic read method if needed by mimetypes or email lib
-                return self.buffer.read()
-            def seek(self, offset):
-                self.buffer.seek(offset)
-
-        # Create a named temporary file to pass to send_email_notification
-        temp_file_path = Path(fn) # Use a temporary path
+        temp_file_path = Path(fn)
         with open(temp_file_path, 'wb') as tmp_f:
             tmp_f.write(buf.getvalue())
         
-        # Create a file object mock if needed for send_email_notification's attachment logic
         class MockFile:
             def __init__(self, path):
-                self.name = str(path) # Path to the actual temp file
+                self.name = str(path)
 
         attachment_obj_for_email = MockFile(temp_file_path)
-
 
         recipients = ([{"name":instr_name, "email":instr_email}] if instr_email else []) + [{"name":n.strip(), "email":e.strip()} for ln in students_input_str.splitlines() if ',' in ln for n,e in [ln.split(',',1)]]
         if not recipients: return gr.update(value="⚠️ Error: No recipients.")
@@ -641,10 +588,9 @@ def email_document_callback(course_name, doc_type, output_text_content, students
         s_count = 0
         errs = []
         
-        # Prepare HTML content once
         html_email_body = f"""
         <html><body>
-        <p>Hi {{recipient_name}},</p>
+        <p>Hi {{{{recipient_name}}}},</p>
         <p>Attached is the {doc_type.lower()} for the course: <strong>{course_name}</strong>.</p>
         <p>Best regards,<br>AI Tutor System</p>
         </body></html>
@@ -654,13 +600,12 @@ def email_document_callback(course_name, doc_type, output_text_content, students
             personalized_html_body = html_email_body.replace("{{recipient_name}}", rec['name'])
             subject = f"{doc_type.capitalize()}: {course_name}"
             
-            # Pass the MockFile object which has the .name attribute pointing to the temp file
             if send_email_notification(rec["email"], subject, personalized_html_body, from_name=SMTP_USER, attachment_file_obj=attachment_obj_for_email):
                 s_count += 1
             else:
                 errs.append(f"Failed to send to {rec['email']}. Check logs for SMTP errors.")
 
-        if temp_file_path.exists(): # Clean up the temporary file
+        if temp_file_path.exists():
             os.remove(temp_file_path)
 
         status = f"✅ {doc_type.capitalize()} sent attempt to {s_count} recipient(s)."
@@ -669,13 +614,12 @@ def email_document_callback(course_name, doc_type, output_text_content, students
 
     except Exception as e: err_txt = f"⚠️ Emailing Err:\n{traceback.format_exc()}"; print(err_txt); return gr.update(value=err_txt)
 
-
 def email_syllabus_callback(c, s_str, out_content): return email_document_callback(c, "Syllabus", out_content, s_str)
 def email_plan_callback(c, s_str, out_content): return email_document_callback(c, "Lesson Plan", out_content, s_str)
 
 # --- Build Instructor UI ---
 def build_instructor_ui():
-    import time
+    # import time # This import seems unused here
     with gr.Blocks(theme=gr.themes.Soft()) as instructor_demo:
         gr.Markdown("## AI Tutor Instructor Panel")
         with gr.Tabs():
@@ -742,8 +686,6 @@ def build_instructor_ui():
 
 # --- Student System Prompt Generation (Placeholder) ---
 def generate_student_system_prompt(mode, interests, topic, segment_text):
-    # This is a placeholder. Implement your actual prompt generation logic.
-    # The more detailed and context-aware this prompt is, the better the tutor will behave.
     prompt = f"You are {STUDENT_BOT_NAME}, a friendly and encouraging AI Tutor.\n"
     prompt += f"Your current interaction mode is: '{mode}'.\n"
     prompt += f"The student's known interests are: {interests if interests else 'not yet specified'}.\n"
@@ -775,7 +717,6 @@ def generate_student_system_prompt(mode, interests, topic, segment_text):
 # --- Student Tutor UI and Logic ---
 def build_student_tutor_ui():
     with gr.Blocks(theme=gr.themes.Soft()) as student_demo:
-        # --- Persistent states ---
         token_state          = gr.State(None)
         course_id_state      = gr.State(None)
         lesson_id_state      = gr.State(None)
@@ -790,10 +731,8 @@ def build_student_tutor_ui():
         st_teaching_turns    = gr.State(0)
         st_session_start     = gr.State(None)
 
-        # --- UI Header ---
         gr.Markdown("## Easy AI Tutor - Interactive Lesson")
 
-        # --- Student Input and Output Interface ---
         with gr.Row():
             with gr.Column(scale=1):
                 st_voice_dropdown = gr.Dropdown(choices=["alloy", "echo", "fable", "nova", "onyx", "shimmer"], value="nova", label="Tutor Voice")
@@ -801,26 +740,20 @@ def build_student_tutor_ui():
                 st_text_input = gr.Textbox(label="💬 Or type your response", placeholder="Type here...")
                 st_send_button = gr.Button("Send", variant="primary")
             with gr.Column(scale=3):
-                st_chatbot = gr.Chatbot(label="Lesson Conversation", height=500, bubble_full_width=False)
+                st_chatbot = gr.Chatbot(label="Lesson Conversation", height=500, bubble_full_width=False, value=st_display_history) # Bind value to state
                 st_audio_out = gr.Audio(type="filepath", autoplay=True, label="🎧 Tutor’s Voice")
 
-        # --- Extract token from query ---
         def grab_token(request: gr.Request):
-            return request.query_params.get("token")
+            token = request.query_params.get("token")
+            print(f"DEBUG: grab_token called. Token from query_params: {token}") # --- ADDED ---
+            return token
 
-        student_demo.load(fn=grab_token, inputs=[], outputs=[token_state])
+        student_demo.load(fn=grab_token, inputs=None, outputs=[token_state]) # --- MODIFIED --- inputs=None for request-only fn
 
-        # --- Decode token and load context ---
+        # --- MODIFIED --- decode_context function with extensive DEBUG prints
         def decode_context(token, request: gr.Request):
-            """
-            • Декодирует JWT-токен и проверяет 5-значный код из URL
-            • Загружает конфиг курса
-            • Возвращает: course_id, lesson_id, student_id, topic, segment_title
-              ─ topic никогда не пустой и всегда приведён к Title Case
-            """
             print(f"DEBUG: decode_context called. Token present: {bool(token)}, Code from URL: {request.query_params.get('code')}")
-        
-            # 1) Токен должен быть
+
             if not token:
                 print("DEBUG: decode_context returning - No Token")
                 return (
@@ -830,7 +763,6 @@ def build_student_tutor_ui():
                 )
         
             try:
-                # 2) Проверяем подпись токена и код
                 payload = jwt.decode(
                     token,
                     JWT_SECRET_KEY,
@@ -846,10 +778,8 @@ def build_student_tutor_ui():
                         "Access code mismatch. Please recheck the link or code."
                     )
         
-                # 3) Базовые ID
                 course_id  = payload["course_id"]
                 student_id = payload["sub"]
-                # Ensure lesson_id is an int, handle potential errors
                 try:
                     lesson_id  = int(payload["lesson_id"])
                 except (ValueError, TypeError):
@@ -860,8 +790,7 @@ def build_student_tutor_ui():
                         "Lesson ID in token is not a valid number."
                     )
                 print(f"DEBUG: Extracted from payload - course_id: {course_id}, student_id: {student_id}, lesson_id: {lesson_id} (type: {type(lesson_id)})")
-        
-                # 4) Загружаем конфиг курса
+
                 cfg_path = CONFIG_DIR / f"{course_id}_config.json"
                 print(f"DEBUG: Attempting to load config from: {cfg_path}")
                 if not cfg_path.exists():
@@ -875,7 +804,7 @@ def build_student_tutor_ui():
                 cfg       = json.loads(cfg_path.read_text(encoding="utf-8"))
                 lessons   = cfg.get("lessons", [])
                 print(f"DEBUG: Config loaded. Number of lessons found: {len(lessons)}")
-        
+
                 if not isinstance(lesson_id, int) or lesson_id <= 0 or lesson_id > len(lessons):
                     print(f"DEBUG: decode_context returning - Lesson Invalid. lesson_id: {lesson_id}, num_lessons: {len(lessons)}")
                     return (
@@ -884,40 +813,34 @@ def build_student_tutor_ui():
                         f"Lesson ID ({lesson_id}) is out of range or invalid for {len(lessons)} lessons."
                     )
         
-                # 5) Извлекаем тему и сегмент
                 lesson_index = lesson_id - 1
                 lesson = lessons[lesson_index]
                 print(f"DEBUG: Accessing lesson at index {lesson_index}. Lesson data: {lesson}")
-        
+
                 topic_summary_raw = lesson.get("topic_summary")
                 topic_raw = lesson.get("topic")
                 title_raw = lesson.get("title")
                 name_raw = lesson.get("name")
                 print(f"DEBUG: Raw topic fields - topic_summary: '{topic_summary_raw}', topic: '{topic_raw}', title: '{title_raw}', name: '{name_raw}'")
-        
+
                 current_topic = (
                     topic_summary_raw
                     or topic_raw
                     or title_raw
                     or name_raw
-                    # Fallback if all primary fields are empty or None
                     or (f"Lesson {lesson_id}" if (topic_summary_raw is None and topic_raw is None and title_raw is None and name_raw is None) else None)
                 )
                 
-                if not current_topic or not current_topic.strip(): # If current_topic is None or empty string after OR chain
+                if not current_topic or not current_topic.strip():
                      current_topic = f"Lesson {lesson_id} (Default Topic)"
                      print(f"DEBUG: All specific topic fields were empty/None. Using default: {current_topic}")
-        
-        
-                # ► Нормализуем к Title Case («Learning Spanish Greetings»)
-                # Ensure current_topic is a string before calling .title()
+
                 current_topic_title_cased = str(current_topic).title() if current_topic else f"Lesson {lesson_id} (Topic Processing Error)"
                 print(f"DEBUG: Final current_topic before return: '{current_topic_title_cased}'")
         
                 current_segment = lesson.get("segment_title") or lesson.get("original_section_title") or ""
                 print(f"DEBUG: Final current_segment before return: '{current_segment}'")
         
-                # 6) Возвращаем 5 значений
                 print(f"DEBUG: decode_context successfully returning: {(course_id, lesson_id, student_id, current_topic_title_cased, current_segment)}")
                 return (
                     course_id,
@@ -927,41 +850,24 @@ def build_student_tutor_ui():
                     current_segment
                 )
         
-            # 7) Обработка ошибок токена
             except jwt.ExpiredSignatureError:
                 print("DEBUG: decode_context returning - ExpiredSignatureError")
-                return (
-                    "N/A", "N/A", "N/A",
-                    "Error: Expired",
-                    "This link has expired."
-                )
+                return ( "N/A", "N/A", "N/A", "Error: Expired", "This link has expired." )
             except jwt.InvalidTokenError as e:
                 print(f"DEBUG: decode_context returning - InvalidTokenError: {e}")
-                return (
-                    "N/A", "N/A", "N/A",
-                    "Error: Invalid Token",
-                    f"Invalid token: {e}"
-                )
+                return ( "N/A", "N/A", "N/A", "Error: Invalid Token", f"Invalid token: {e}" )
             except Exception as e:
-                # Try to get some context if payload was partially decoded
-                course_id_fallback = "N/A"
-                student_id_fallback = "N/A"
-                lesson_id_fallback = "N/A"
+                course_id_fallback = "N/A"; student_id_fallback = "N/A"; lesson_id_fallback = "N/A"
                 if 'payload' in locals() and isinstance(payload, dict):
                     course_id_fallback = payload.get("course_id", "N/A")
                     student_id_fallback = payload.get("sub", "N/A")
                     lesson_id_fallback = payload.get("lesson_id", "N/A")
-        
                 print(f"DEBUG: decode_context returning - Unknown Exception: {e}, Traceback: {traceback.format_exc()}")
-                return (
-                    course_id_fallback, lesson_id_fallback, student_id_fallback,
-                    "Error: Unknown Processing",
-                    f"Unexpected error during context decoding: {e}"
-                )
+                return ( course_id_fallback, lesson_id_fallback, student_id_fallback, "Error: Unknown Processing", f"Unexpected error during context decoding: {e}" )
 
         decode_event = student_demo.load(
             fn=decode_context,
-            inputs=[token_state],
+            inputs=[token_state], # request is implicitly passed if in fn signature
             outputs=[
                 course_id_state,
                 lesson_id_state,
@@ -971,73 +877,45 @@ def build_student_tutor_ui():
             ],
         )
 
-
-        # --- Initial tutor message ---
-        # In build_student_tutor_ui() function:
-
-        # --- Initial tutor message ---
-        # Add lesson_id to function arguments
+        # --- MODIFIED --- tutor_greeter function
         def tutor_greeter(current_lesson_topic, current_lesson_segment, current_lesson_id,
-                  request: gr.Request): # Add request
-            # A. Handle cases where the topic itself is an error message from decode_context
+                          request: gr.Request):
+            print(f"DEBUG: tutor_greeter called. Topic: '{current_lesson_topic}', Segment: '{current_lesson_segment}', Lesson ID: {current_lesson_id}")
             if isinstance(current_lesson_topic, str) and current_lesson_topic.startswith("Error:"):
                 error_message_for_ui = f"⚠️ **Access Problem:** {current_lesson_topic.replace('Error: ', '')}.\n"
-                if "Expired" in current_lesson_topic:
-                    error_message_for_ui += "Your session link may have expired. Please try obtaining a new link."
-                elif "Token" in current_lesson_topic or "Code Mismatch" in current_lesson_topic:
-                    error_message_for_ui += "Please ensure you are using the correct and complete link, including any access code."
-                else:
-                    error_message_for_ui += "Please contact support or your instructor if this issue persists."
-        
-                # Return values to display the error and disable interaction
+                if "Expired" in current_lesson_topic: error_message_for_ui += "Your session link may have expired. Please try obtaining a new link."
+                elif "Token" in current_lesson_topic or "Code Mismatch" in current_lesson_topic: error_message_for_ui += "Please ensure you are using the correct and complete link, including any access code."
+                else: error_message_for_ui += "Please contact support or your instructor if this issue persists."
+                print(f"DEBUG: tutor_greeter returning error to UI: {error_message_for_ui}")
                 return (
-                    [[None, error_message_for_ui]],  # st_display_history (for st_chatbot)
-                    [],                              # st_chat_history (empty, no AI interaction)
-                    "error",                         # st_session_mode
-                    0,                               # st_turn_count
-                    0,                               # st_teaching_turns
-                    None,                            # st_audio_out (no audio for error)
-                    datetime.now(dt_timezone.utc),   # st_session_start
-                    gr.update(interactive=False),    # st_mic_input (disable)
-                    gr.update(interactive=False),    # st_text_input (disable)
-                    gr.update(interactive=False)     # st_send_button (disable)
+                    [[None, error_message_for_ui]], [], "error", 0, 0, None, datetime.now(dt_timezone.utc),
+                    gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False)
                 )
-        
-            # B. Proceed with normal greeting if topic is valid
-            lesson_id_str = str(current_lesson_id) if current_lesson_id is not None else "?"
-            # Ensure display_topic is not None or empty, fallback if necessary
-            display_topic = current_lesson_topic if current_lesson_topic and current_lesson_topic.strip() else f"Lesson {lesson_id_str} (Topic Undefined)"
-        
-            # Ensure segment is a string, default to empty if not
+
+            lesson_id_str = str(current_lesson_id) if current_lesson_id is not None and isinstance(current_lesson_id, int) else "?"
+            
+            if current_lesson_topic and current_lesson_topic.strip() and not current_lesson_topic.startswith("Error:"):
+                display_topic = current_lesson_topic
+            elif lesson_id_str != "?":
+                display_topic = f"Lesson {lesson_id_str} (Topic Not Specified)"
+            else:
+                display_topic = "the current lesson (Topic Not Specified)"
+            print(f"DEBUG: tutor_greeter - final display_topic: '{display_topic}'")
+
             current_lesson_segment = current_lesson_segment if isinstance(current_lesson_segment, str) else ""
-        
             prompt = generate_student_system_prompt("initial_greeting", "", display_topic, current_lesson_segment)
             
-            audio_fp_str = None
-            msg_content = ""
-        
+            audio_fp_str = None; msg_content = ""
             try:
                 client = openai.OpenAI()
-                res = client.chat.completions.create(
-                    model=STUDENT_CHAT_MODEL,
-                    messages=[{"role": "system", "content": prompt}],
-                    max_tokens=150
-                )
+                res = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=[{"role": "system", "content": prompt}], max_tokens=150)
                 msg_content = res.choices[0].message.content.strip()
-                
                 try:
-                    # Use the selected voice from st_voice_dropdown if available, otherwise default
-                    # For the initial greeting, we don't have access to st_voice_dropdown's value directly here
-                    # So we'll stick to a default like "nova" or make it configurable if needed.
-                    # For simplicity, keeping "nova" for now.
                     speech_res = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
                     audio_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
-                    with open(audio_fp, "wb") as f:
-                        f.write(speech_res.content)
+                    with open(audio_fp, "wb") as f: f.write(speech_res.content)
                     audio_fp_str = str(audio_fp)
-                except Exception as e_tts:
-                    print(f"TTS Error in tutor_greeter for main response: {e_tts}")
-        
+                except Exception as e_tts: print(f"TTS Error in tutor_greeter for main response: {e_tts}")
             except Exception as e_chat:
                 print(f"Chat Completion Error in tutor_greeter: {e_chat}")
                 msg_content = f"Hello! I'm ready to start our lesson on '{display_topic}', but I'm having a slight technical difficulty with my opening lines. How are you today?"
@@ -1045,37 +923,26 @@ def build_student_tutor_ui():
                     client_fallback_tts = openai.OpenAI() 
                     speech_res_fallback = client_fallback_tts.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
                     audio_fp_fallback = STUDENT_AUDIO_DIR / f"intro_fallback_{uuid.uuid4()}.mp3"
-                    with open(audio_fp_fallback, "wb") as f:
-                        f.write(speech_res_fallback.content)
+                    with open(audio_fp_fallback, "wb") as f: f.write(speech_res_fallback.content)
                     audio_fp_str = str(audio_fp_fallback)
-                except Exception as e_tts_fallback:
-                    print(f"TTS Error in tutor_greeter for fallback message: {e_tts_fallback}")
-        
+                except Exception as e_tts_fallback: print(f"TTS Error in tutor_greeter for fallback message: {e_tts_fallback}")
+
             initial_display_history = [[None, msg_content]]
             initial_chat_history = [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg_content}]
-            
-            # Return values for a successful greeting, inputs remain interactive
+            print(f"DEBUG: tutor_greeter successfully returning AI greeting. Message: '{msg_content[:50]}...'")
             return (
-                initial_display_history,
-                initial_chat_history,
-                "onboarding", # st_session_mode
-                0,            # st_turn_count
-                0,            # st_teaching_turns
-                audio_fp_str,
-                datetime.now(dt_timezone.utc),
-                gr.update(interactive=True), # st_mic_input
-                gr.update(interactive=True), # st_text_input
-                gr.update(interactive=True)  # st_send_button
+                initial_display_history, initial_chat_history, "onboarding", 0, 0, audio_fp_str, datetime.now(dt_timezone.utc),
+                gr.update(interactive=True), gr.update(interactive=True), gr.update(interactive=True)
             )
 
-        # Update the student_demo.load call for tutor_greeter to include lesson_id_state
+        # --- MODIFIED --- decode_event.then call (removed gr.Request() from inputs)
         decode_event.then(
             tutor_greeter,
             inputs=[
                 lesson_topic_state,
                 lesson_segment_state,
                 lesson_id_state
-                # gr.Request() REMOVED FROM HERE
+                # gr.Request() REMOVED FROM HERE, Gradio injects it if in function signature
             ],
             outputs=[
                 st_display_history, # This will be used by st_chatbot
@@ -1085,14 +952,16 @@ def build_student_tutor_ui():
                 st_teaching_turns,
                 st_audio_out,
                 st_session_start,
-                st_mic_input,     # Add output for mic
-                st_text_input,    # Add output for text input
-                st_send_button    # Add output for send button
+                st_mic_input,
+                st_text_input,
+                st_send_button
             ],
         )
-        # --- Processing student response ---
+
         def handle_response(mic_path, text, chat_hist, disp_hist, profile, mode, turns, teaching_turns, voice,
                             sid, cid, lid, topic, segment, start_time):
+            # --- ADDED --- Debug print
+            print(f"DEBUG: handle_response called. Mode: {mode}, Turns: {turns}, Mic path: {bool(mic_path)}, Text: '{text}'")
             input_text = text.strip() if text else ""
             if mic_path:
                 try:
@@ -1101,10 +970,14 @@ def build_student_tutor_ui():
                         result = client.audio.transcriptions.create(file=f, model=STUDENT_WHISPER_MODEL)
                     input_text = result.text.strip()
                     if os.path.exists(mic_path): os.remove(mic_path)
-                except:
+                except Exception as e_stt: # --- MODIFIED --- Catch specific exception
                     input_text = "(Audio could not be transcribed.)"
+                    print(f"Error in STT: {e_stt}")
+
 
             if not input_text:
+                # --- ADDED --- Debug print
+                print("DEBUG: handle_response - no input text, returning.")
                 return disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, gr.update(value=None), gr.update(value="")
 
             disp_hist.append([input_text, None])
@@ -1112,7 +985,9 @@ def build_student_tutor_ui():
 
             turns += 1
             if mode == "onboarding":
-                profile["interests"].append(input_text)
+                # --- MODIFIED --- Check if input_text is not an error message before adding to interests
+                if input_text != "(Audio could not be transcribed.)":
+                    profile["interests"].append(input_text)
                 if turns >= STUDENT_ONBOARDING_TURNS:
                     mode = "teaching_transition"
             elif mode == "teaching_transition":
@@ -1124,20 +999,32 @@ def build_student_tutor_ui():
             elif mode == "interest_break_transition":
                 mode = "interest_break_active"
             elif mode == "interest_break_active":
-                mode = "teaching"
+                mode = "teaching" # Should transition back to teaching
+            # --- ADDED --- Quiz time logic based on STUDENT_QUIZ_AFTER_TURNS
+            elif turns % STUDENT_QUIZ_AFTER_TURNS == 0 and mode not in ["quiz_time", "ending_session"]: # Avoid repeated quiz if already in quiz mode
+                mode = "quiz_time"
             elif turns >= STUDENT_MAX_SESSION_TURNS:
                 mode = "ending_session"
+            
+            # --- ADDED --- Debug print for mode change
+            print(f"DEBUG: handle_response - new mode: {mode}, new turns: {turns}, teaching_turns: {teaching_turns}")
+
 
             prompt = generate_student_system_prompt(mode, ", ".join(profile["interests"]), topic, segment)
-            if chat_hist and chat_hist[0]["role"] != "system":
+            # Ensure system prompt is always first or updated if it exists
+            if chat_hist and chat_hist[0]["role"] == "system":
+                chat_hist[0] = {"role": "system", "content": prompt}
+            else:
                 chat_hist.insert(0, {"role": "system", "content": prompt})
+
 
             try:
                 client = openai.OpenAI()
                 res = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=chat_hist, max_tokens=250)
                 bot_reply = res.choices[0].message.content.strip()
-            except:
+            except Exception as e_chat_hr: # --- MODIFIED --- Catch specific exception
                 bot_reply = "Sorry, I didn't understand that. Could you rephrase?"
+                print(f"Error in OpenAI Chat (handle_response): {e_chat_hr}")
 
             chat_hist.append({"role": "assistant", "content": bot_reply})
             disp_hist[-1][1] = bot_reply
@@ -1147,8 +1034,11 @@ def build_student_tutor_ui():
                 fp = STUDENT_AUDIO_DIR / f"turn_{uuid.uuid4()}.mp3"
                 with open(fp, "wb") as f:
                     f.write(speech.content)
+                # --- ADDED --- Debug print
+                print(f"DEBUG: handle_response successfully returning. Bot reply: '{bot_reply[:50]}...'")
                 return disp_hist, chat_hist, profile, mode, turns, teaching_turns, str(fp), gr.update(value=None), gr.update(value="")
-            except:
+            except Exception as e_tts_hr: # --- MODIFIED --- Catch specific exception
+                print(f"Error in TTS (handle_response): {e_tts_hr}")
                 return disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, gr.update(value=None), gr.update(value="")
 
         event_inputs = [
@@ -1169,17 +1059,12 @@ def build_student_tutor_ui():
 
 # --- FastAPI App Setup (Continued) ---
 
-# Mount your Gradio Instructor UI under /instructor
 instructor_ui = build_instructor_ui()
 app = gr.mount_gradio_app(app, instructor_ui, path="/instructor")
 
-# Build and Mount Student Tutor UI
 student_tutor_ui_instance = build_student_tutor_ui()
 app = gr.mount_gradio_app(app, student_tutor_ui_instance, path=STUDENT_UI_PATH)
 
-
-# Redirect root (/) → /instructor so users just type your domain
-# Verification step before showing student tutor interface
 @app.get("/verify_access", response_class=HTMLResponse)
 async def verify_access(request: Request, token: str = None):
     if not token:
@@ -1193,50 +1078,33 @@ async def verify_access(request: Request, token: str = None):
             <input type="text" name="code" placeholder="5-digit code" required>
             <button type="submit">Continue</button>
         </form>
-
-
     </body>
     </html>
     """)
 
 @app.get("/")
-def root_redirect(): # Renamed to avoid conflict if you define root differently elsewhere
+def root_redirect():
     return RedirectResponse(url="/instructor")
 
-# Endpoint for student to access lesson via token
 @app.get("/class", response_class=HTMLResponse)
-async def get_student_lesson_page(request: Request, token: str = None): # token is the JWT string
+async def get_student_lesson_page(request: Request, token: str = None):
     if not token:
         return HTMLResponse("<h3>Error: Access token missing. Please use the link provided in your email.</h3>", status_code=400)
     try:
-        # Validate the token's basic structure, signature, and expiry. Audience is also checked.
-        # This decode is primarily for validation before redirecting to manual code entry.
-        # The full payload processing will happen in the student UI's decode_context after code entry.
         jwt.decode(token, JWT_SECRET_KEY, algorithms=[ALGORITHM], audience=APP_DOMAIN)
-
-        # Redirect to the verification page, passing the original token.
-        # The /verify_access page will ask the student to input the 5-digit code from their email.
         verify_url = f"/verify_access?token={token}"
         return RedirectResponse(url=verify_url)
-
     except jwt.ExpiredSignatureError:
         return HTMLResponse("<h3>Access link has expired.</h3><p>Your session link was valid for a limited time. Please check if a new link is available or contact your instructor.</p>", status_code=401)
     except jwt.InvalidTokenError as e:
-        # This covers various issues like InvalidSignatureError, InvalidAudienceError, DecodeError etc.
         print(f"Invalid token error on /class: {e}")
         return HTMLResponse(f"<h3>Invalid access link.</h3><p>There was a problem with your session link: {str(e)}. Please ensure you copied the entire link correctly.</p>", status_code=401)
     except Exception as e:
         print(f"Error processing /class request: {e}\n{traceback.format_exc()}")
         return HTMLResponse(f"<h3>Error preparing lesson.</h3><p>An unexpected error occurred: {str(e)}. Please try again later or contact support.</p>", status_code=500)
 
-# ─── Final gate: token + code must match ────────────────────────────────────
-@app.get("/class/enter", response_class=RedirectResponse)
-async def enter_class(token: str, code: str):
-    """
-    Last check before we let the student see the Gradio UI:
-    1. JWT must be valid (signature, expiry, audience)
-    2. 5-digit code in the URL must match the one stored in the token
-    """
+@app.get("/class/enter", response_class=RedirectResponse) # --- MODIFIED --- response_class can be HTMLResponse for errors
+async def enter_class(token: str, code: str, request: Request): # --- ADDED --- request for base_url
     try:
         payload = jwt.decode(
             token,
@@ -1244,20 +1112,26 @@ async def enter_class(token: str, code: str):
             algorithms=[ALGORITHM],
             audience=APP_DOMAIN
         )
-
         if payload.get("code") != code:
-            return HTMLResponse("<h3>Wrong access code.</h3>", status_code=401)
+            # --- MODIFIED --- Return HTMLResponse for user feedback
+            return HTMLResponse("<h3>Wrong access code. Please check the code from your email and try again.</h3>", status_code=401)
+        
+        # --- MODIFIED --- Construct redirect URL carefully
+        # Use request.url_for for robustness if STUDENT_UI_PATH is complex or app is behind a proxy
+        # However, for simple path, direct construction is fine.
+        # Ensure STUDENT_UI_PATH starts with a '/'
+        redirect_url = f"{STUDENT_UI_PATH}?token={token}&code={code}"
+        if not STUDENT_UI_PATH.startswith("/"):
+            redirect_url = f"/{redirect_url}" # Ensure leading slash if missing
 
-        # Everything checks out → hand off to the real UI
-        return RedirectResponse(
-            url=f"{STUDENT_UI_PATH}?token={token}&code={code}"
-        )
+        return RedirectResponse(url=redirect_url)
 
     except jwt.ExpiredSignatureError:
-        return HTMLResponse("<h3>Link expired.</h3>", status_code=401)
+        return HTMLResponse("<h3>Link expired.</h3><p>Your session link was valid for a limited time. Please check if a new link is available or contact your instructor.</p>", status_code=401)
     except jwt.InvalidTokenError:
-        return HTMLResponse("<h3>Invalid link.</h3>", status_code=401)
+        return HTMLResponse("<h3>Invalid link.</h3><p>There was a problem with your session link. Please ensure you copied the entire link correctly.</p>", status_code=401)
     except Exception as e:
+        print(f"Error in /class/enter: {e}\n{traceback.format_exc()}")
         return HTMLResponse(f"<h3>Unexpected error: {e}</h3>", status_code=500)
 
 @app.on_event("startup")
@@ -1283,10 +1157,7 @@ async def shutdown_event():
 if __name__ == "__main__":
     print(f"Starting App. Instructor Panel at /instructor. Student access via /class?token=...")
     print(f"Student Tutor UI should be available at {STUDENT_UI_PATH} (after /class redirect)")
-    # To run this: uvicorn your_script_name:app --reload --port 8000
     # Example: uvicorn main:app --reload --port 8000
     # (Assuming your file is named main.py)
-    #
     # The uvicorn command handles running the FastAPI app and its lifecycle.
-    # No need for a while True loop here.
     pass
