@@ -24,7 +24,7 @@ load_dotenv(dotenv_path=dotenv_path)
 
 # --- Configuration ---
 openai.api_key = os.getenv("OPENAI_API_KEY")
-CONFIG_DIR = Path("course_data")
+CONFIG_DIR = Path(__file__).parent / "course_data"
 CONFIG_DIR.mkdir(exist_ok=True)
 PROGRESS_LOG_FILE = CONFIG_DIR / "student_progress_log.csv"
 
