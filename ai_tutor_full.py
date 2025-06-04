@@ -748,14 +748,12 @@ def build_student_tutor_ui():
                     print(f"DEBUG: grab_token called. Token from query_params: {token}") # --- ADDED ---
                     return token
         
-                # 1) Сначала вызываем grab_token и сохраняем событие в first_event
                 first_event = student_demo.load(
                     fn=grab_token,
                     inputs=None,
                     outputs=[token_state]
                 )
         
-                # --- decode_context остаётся прежним —
                 def decode_context(token, request: gr.Request):
                     print(f"DEBUG: decode_context called. Token present: {bool(token)}, Code from URL: {request.query_params.get('code')}")
         
@@ -869,9 +867,84 @@ def build_student_tutor_ui():
                             lesson_id_fallback = payload.get("lesson_id", "N/A")
                         print(f"DEBUG: decode_context returning - Unknown Exception: {e}, Traceback: {traceback.format_exc()}")
                         return ( course_id_fallback, lesson_id_fallback, student_id_fallback, "Error: Unknown Processing", f"Unexpected error during context decoding: {e}" )
-        
 
-                # 2) После grab_token вызываем decode_context
+                # --- MOVED tutor_greeter function DEFINITION HERE ---
+                def tutor_greeter(current_lesson_topic, current_lesson_segment, current_lesson_id,
+                                  request: gr.Request):
+                    print(f"DEBUG: tutor_greeter called. Topic: '{current_lesson_topic}', Segment: '{current_lesson_segment}', Lesson ID: {current_lesson_id}")
+                    if isinstance(current_lesson_topic, str) and current_lesson_topic.startswith("Error:"):
+                        error_message_for_ui = f"⚠️ **Access Problem:** {current_lesson_topic.replace('Error: ', '')}.\n"
+                        if "Expired" in current_lesson_topic: error_message_for_ui += "Your session link may have expired. Please try obtaining a new link."
+                        elif "Token" in current_lesson_topic or "Code Mismatch" in current_lesson_topic: error_message_for_ui += "Please ensure you are using the correct and complete link, including any access code."
+                        else: error_message_for_ui += "Please contact support or your instructor if this issue persists."
+                        print(f"DEBUG: tutor_greeter returning error to UI: {error_message_for_ui}")
+                        return (
+                            [[None, error_message_for_ui]], # For st_chatbot
+                            [[None, error_message_for_ui]], # For st_display_history state
+                            [],                             # For st_chat_history state
+                            "error",                        # For st_session_mode state
+                            0,                              # For st_turn_count state
+                            0,                              # For st_teaching_turns state
+                            None,                           # For st_audio_out component
+                            datetime.now(dt_timezone.utc),  # For st_session_start state
+                            gr.update(interactive=False),   # For st_mic_input component
+                            gr.update(interactive=False),   # For st_text_input component
+                            gr.update(interactive=False)    # For st_send_button component
+                        )
+
+                    lesson_id_str = str(current_lesson_id) if current_lesson_id is not None and isinstance(current_lesson_id, int) else "?"
+                    
+                    if current_lesson_topic and current_lesson_topic.strip() and not current_lesson_topic.startswith("Error:"):
+                        display_topic = current_lesson_topic
+                    elif lesson_id_str != "?":
+                        display_topic = f"Lesson {lesson_id_str} (Topic Not Specified)"
+                    else:
+                        display_topic = "the current lesson (Topic Not Specified)"
+                    print(f"DEBUG: tutor_greeter - final display_topic: '{display_topic}'")
+
+                    current_lesson_segment = current_lesson_segment if isinstance(current_lesson_segment, str) else ""
+                    prompt = generate_student_system_prompt("initial_greeting", "", display_topic, current_lesson_segment)
+                    
+                    audio_fp_str = None; msg_content = ""
+                    try:
+                        client = openai.OpenAI()
+                        res = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=[{"role": "system", "content": prompt}], max_tokens=150)
+                        msg_content = res.choices[0].message.content.strip()
+                        try:
+                            speech_res = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
+                            audio_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
+                            with open(audio_fp, "wb") as f: f.write(speech_res.content)
+                            audio_fp_str = str(audio_fp)
+                        except Exception as e_tts: print(f"TTS Error in tutor_greeter for main response: {e_tts}")
+                    except Exception as e_chat:
+                        print(f"Chat Completion Error in tutor_greeter: {e_chat}")
+                        msg_content = f"Hello! I'm ready to start our lesson on '{display_topic}', but I'm having a slight technical difficulty with my opening lines. How are you today?"
+                        try:
+                            client_fallback_tts = openai.OpenAI() 
+                            speech_res_fallback = client_fallback_tts.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
+                            audio_fp_fallback = STUDENT_AUDIO_DIR / f"intro_fallback_{uuid.uuid4()}.mp3"
+                            with open(audio_fp_fallback, "wb") as f: f.write(speech_res_fallback.content)
+                            audio_fp_str = str(audio_fp_fallback)
+                        except Exception as e_tts_fallback: print(f"TTS Error in tutor_greeter for fallback message: {e_tts_fallback}")
+
+                    initial_display_history = [[None, msg_content]]
+                    initial_chat_history = [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg_content}]
+                    print(f"DEBUG: tutor_greeter successfully returning AI greeting. Message: '{msg_content[:50]}...'")
+                    return (
+                        initial_display_history,  # For st_chatbot
+                        initial_display_history,  # For st_display_history state
+                        initial_chat_history,     # For st_chat_history state
+                        "onboarding",             # For st_session_mode state
+                        0,                        # For st_turn_count state
+                        0,                        # For st_teaching_turns state
+                        audio_fp_str,             # For st_audio_out component
+                        datetime.now(dt_timezone.utc), # For st_session_start state
+                        gr.update(interactive=True),   # For st_mic_input component
+                        gr.update(interactive=True),   # For st_text_input component
+                        gr.update(interactive=True)    # For st_send_button component
+                    )
+                # --- END OF MOVED tutor_greeter function DEFINITION ---
+
                 decode_event = first_event.then(
                     fn=decode_context,
                     inputs=[token_state],
@@ -884,247 +957,131 @@ def build_student_tutor_ui():
                     ]
                 )
             
-                # 3) После decode_context вызываем tutor_greeter
                 decode_event.then(
-                fn=tutor_greeter,
-                inputs=[
-                    lesson_topic_state,
-                    lesson_segment_state,
-                    lesson_id_state
-                    # gr.Request() automatisch
-                ],
-                outputs=[
-                    st_chatbot,          # For initial display in chatbot component
-                    st_display_history,  # For the state object st_display_history
-                    st_chat_history,
-                    st_session_mode,
-                    st_turn_count,
-                    st_teaching_turns,
-                    st_audio_out,
-                    st_session_start,
-                    st_mic_input,
-                    st_text_input,
-                    st_send_button
+                    fn=tutor_greeter, # Now tutor_greeter is defined before this call
+                    inputs=[
+                        lesson_topic_state,
+                        lesson_segment_state,
+                        lesson_id_state
+                    ],
+                    outputs=[
+                        st_chatbot,
+                        st_display_history,
+                        st_chat_history,
+                        st_session_mode,
+                        st_turn_count,
+                        st_teaching_turns,
+                        st_audio_out,
+                        st_session_start,
+                        st_mic_input,
+                        st_text_input,
+                        st_send_button
+                    ]
+                )
+
+                def handle_response(mic_path, text, chat_hist, disp_hist, profile, mode, turns, teaching_turns, voice,
+                                    sid, cid, lid, topic, segment, start_time):
+                    print(f"DEBUG: handle_response called. Mode: {mode}, Turns: {turns}, Mic path: {bool(mic_path)}, Text: '{text}'")
+                    input_text = text.strip() if text else ""
+                    if mic_path:
+                        try:
+                            client = openai.OpenAI()
+                            with open(mic_path, "rb") as f:
+                                result = client.audio.transcriptions.create(file=f, model=STUDENT_WHISPER_MODEL)
+                            input_text = result.text.strip()
+                            if os.path.exists(mic_path): os.remove(mic_path)
+                        except Exception as e_stt: 
+                            input_text = "(Audio could not be transcribed.)"
+                            print(f"Error in STT: {e_stt}")
+
+                    if not input_text:
+                        print("DEBUG: handle_response - no input text, returning.")
+                        return (
+                            disp_hist, disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, 
+                            gr.update(value=None), gr.update(value="")
+                        )
+
+                    disp_hist.append([input_text, None])
+                    chat_hist.append({"role": "user", "content": input_text})
+
+                    turns += 1
+                    if mode == "onboarding":
+                        if input_text != "(Audio could not be transcribed.)":
+                            profile["interests"].append(input_text)
+                        if turns >= STUDENT_ONBOARDING_TURNS:
+                            mode = "teaching_transition"
+                    elif mode == "teaching_transition":
+                        mode = "teaching"
+                    elif mode == "teaching":
+                        teaching_turns += 1
+                        if teaching_turns % STUDENT_TEACHING_TURNS_PER_BREAK == 0:
+                            mode = "interest_break_transition"
+                    elif mode == "interest_break_transition":
+                        mode = "interest_break_active"
+                    elif mode == "interest_break_active":
+                        mode = "teaching" 
+                    elif turns % STUDENT_QUIZ_AFTER_TURNS == 0 and mode not in ["quiz_time", "ending_session"]:
+                        mode = "quiz_time"
+                    elif turns >= STUDENT_MAX_SESSION_TURNS:
+                        mode = "ending_session"
+                    
+                    print(f"DEBUG: handle_response - new mode: {mode}, new turns: {turns}, teaching_turns: {teaching_turns}")
+
+                    prompt = generate_student_system_prompt(mode, ", ".join(profile["interests"]), topic, segment)
+                    if chat_hist and chat_hist[0]["role"] == "system":
+                        chat_hist[0] = {"role": "system", "content": prompt}
+                    else:
+                        chat_hist.insert(0, {"role": "system", "content": prompt})
+
+                    try:
+                        client = openai.OpenAI()
+                        res = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=chat_hist, max_tokens=250)
+                        bot_reply = res.choices[0].message.content.strip()
+                    except Exception as e_chat_hr: 
+                        bot_reply = "Sorry, I didn't understand that. Could you rephrase?"
+                        print(f"Error in OpenAI Chat (handle_response): {e_chat_hr}")
+
+                    chat_hist.append({"role": "assistant", "content": bot_reply})
+                    disp_hist[-1][1] = bot_reply
+
+                    try:
+                        speech = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice=voice, input=bot_reply)
+                        fp = STUDENT_AUDIO_DIR / f"turn_{uuid.uuid4()}.mp3"
+                        with open(fp, "wb") as f:
+                            f.write(speech.content)
+                        print(f"DEBUG: handle_response successfully returning. Bot reply: '{bot_reply[:50]}...'")
+                        return (
+                            disp_hist, disp_hist, chat_hist, profile, mode, turns, teaching_turns, str(fp), 
+                            gr.update(value=None), gr.update(value="")
+                        )
+                    except Exception as e_tts_hr: 
+                        print(f"Error in TTS (handle_response): {e_tts_hr}")
+                        return (
+                            disp_hist, disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, 
+                            gr.update(value=None), gr.update(value="")
+                        )
+
+                event_inputs = [
+                    st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile,
+                    st_session_mode, st_turn_count, st_teaching_turns, st_voice_dropdown,
+                    student_id_state, course_id_state, lesson_id_state, lesson_topic_state, lesson_segment_state, st_session_start
                 ]
-            )
-        # --- MODIFIED --- tutor_greeter function
-        def tutor_greeter(current_lesson_topic, current_lesson_segment, current_lesson_id,
-                          request: gr.Request):
-            print(f"DEBUG: tutor_greeter called. Topic: '{current_lesson_topic}', Segment: '{current_lesson_segment}', Lesson ID: {current_lesson_id}")
-            if isinstance(current_lesson_topic, str) and current_lesson_topic.startswith("Error:"):
-                error_message_for_ui = f"⚠️ **Access Problem:** {current_lesson_topic.replace('Error: ', '')}.\n"
-                if "Expired" in current_lesson_topic: error_message_for_ui += "Your session link may have expired. Please try obtaining a new link."
-                elif "Token" in current_lesson_topic or "Code Mismatch" in current_lesson_topic: error_message_for_ui += "Please ensure you are using the correct and complete link, including any access code."
-                else: error_message_for_ui += "Please contact support or your instructor if this issue persists."
-                print(f"DEBUG: tutor_greeter returning error to UI: {error_message_for_ui}")
-                return (
-                    [[None, error_message_for_ui]], [], "error", 0, 0, None, datetime.now(dt_timezone.utc),
-                    gr.update(interactive=False), gr.update(interactive=False), gr.update(interactive=False)
-                )
+                event_outputs = [
+                    st_chatbot,           
+                    st_display_history,   
+                    st_chat_history,      
+                    st_student_profile,   
+                    st_session_mode,      
+                    st_turn_count,        
+                    st_teaching_turns,    
+                    st_audio_out,         
+                    st_mic_input,         
+                    st_text_input         
+                ]
 
-            lesson_id_str = str(current_lesson_id) if current_lesson_id is not None and isinstance(current_lesson_id, int) else "?"
-            
-            if current_lesson_topic and current_lesson_topic.strip() and not current_lesson_topic.startswith("Error:"):
-                display_topic = current_lesson_topic
-            elif lesson_id_str != "?":
-                display_topic = f"Lesson {lesson_id_str} (Topic Not Specified)"
-            else:
-                display_topic = "the current lesson (Topic Not Specified)"
-            print(f"DEBUG: tutor_greeter - final display_topic: '{display_topic}'")
-
-            current_lesson_segment = current_lesson_segment if isinstance(current_lesson_segment, str) else ""
-            prompt = generate_student_system_prompt("initial_greeting", "", display_topic, current_lesson_segment)
-            
-            audio_fp_str = None; msg_content = ""
-            try:
-                client = openai.OpenAI()
-                res = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=[{"role": "system", "content": prompt}], max_tokens=150)
-                msg_content = res.choices[0].message.content.strip()
-                try:
-                    speech_res = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
-                    audio_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
-                    with open(audio_fp, "wb") as f: f.write(speech_res.content)
-                    audio_fp_str = str(audio_fp)
-                except Exception as e_tts: print(f"TTS Error in tutor_greeter for main response: {e_tts}")
-            except Exception as e_chat:
-                print(f"Chat Completion Error in tutor_greeter: {e_chat}")
-                msg_content = f"Hello! I'm ready to start our lesson on '{display_topic}', but I'm having a slight technical difficulty with my opening lines. How are you today?"
-                try:
-                    client_fallback_tts = openai.OpenAI() 
-                    speech_res_fallback = client_fallback_tts.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
-                    audio_fp_fallback = STUDENT_AUDIO_DIR / f"intro_fallback_{uuid.uuid4()}.mp3"
-                    with open(audio_fp_fallback, "wb") as f: f.write(speech_res_fallback.content)
-                    audio_fp_str = str(audio_fp_fallback)
-                except Exception as e_tts_fallback: print(f"TTS Error in tutor_greeter for fallback message: {e_tts_fallback}")
-
-            initial_display_history = [[None, msg_content]]
-            initial_chat_history = [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg_content}]
-            print(f"DEBUG: tutor_greeter successfully returning AI greeting. Message: '{msg_content[:50]}...'")
-            return (
-                initial_display_history,  # For st_chatbot
-                initial_display_history,  # For st_display_history state
-                initial_chat_history,     # For st_chat_history state
-                "onboarding",             # For st_session_mode state
-                0,                        # For st_turn_count state
-                0,                        # For st_teaching_turns state
-                audio_fp_str,             # For st_audio_out component
-                datetime.now(dt_timezone.utc), # For st_session_start state
-                gr.update(interactive=True),   # For st_mic_input component
-                gr.update(interactive=True),   # For st_text_input component
-                gr.update(interactive=True)    # For st_send_button component
-            )
-
-        # --- MODIFIED --- decode_event.then call (removed gr.Request() from inputs)
-        decode_event.then(
-            tutor_greeter,
-            inputs=[
-                lesson_topic_state,
-                lesson_segment_state,
-                lesson_id_state
-                # gr.Request() REMOVED FROM HERE, Gradio injects it if in function signature
-            ],
-            outputs=[
-                st_display_history, # This will be used by st_chatbot
-                st_chat_history,
-                st_session_mode,
-                st_turn_count,
-                st_teaching_turns,
-                st_audio_out,
-                st_session_start,
-                st_mic_input,
-                st_text_input,
-                st_send_button
-            ],
-        )
-
-        def handle_response(mic_path, text, chat_hist, disp_hist, profile, mode, turns, teaching_turns, voice,
-                            sid, cid, lid, topic, segment, start_time):
-            # --- ADDED --- Debug print
-            print(f"DEBUG: handle_response called. Mode: {mode}, Turns: {turns}, Mic path: {bool(mic_path)}, Text: '{text}'")
-            input_text = text.strip() if text else ""
-            if mic_path:
-                try:
-                    client = openai.OpenAI()
-                    with open(mic_path, "rb") as f:
-                        result = client.audio.transcriptions.create(file=f, model=STUDENT_WHISPER_MODEL)
-                    input_text = result.text.strip()
-                    if os.path.exists(mic_path): os.remove(mic_path)
-                except Exception as e_stt: # --- MODIFIED --- Catch specific exception
-                    input_text = "(Audio could not be transcribed.)"
-                    print(f"Error in STT: {e_stt}")
-
-
-            if not input_text:
-                # --- ADDED --- Debug print
-                print("DEBUG: handle_response - no input text, returning.")
-                return disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, gr.update(value=None), gr.update(value="")
-
-            disp_hist.append([input_text, None])
-            chat_hist.append({"role": "user", "content": input_text})
-
-            turns += 1
-            if mode == "onboarding":
-                # --- MODIFIED --- Check if input_text is not an error message before adding to interests
-                if input_text != "(Audio could not be transcribed.)":
-                    profile["interests"].append(input_text)
-                if turns >= STUDENT_ONBOARDING_TURNS:
-                    mode = "teaching_transition"
-            elif mode == "teaching_transition":
-                mode = "teaching"
-            elif mode == "teaching":
-                teaching_turns += 1
-                if teaching_turns % STUDENT_TEACHING_TURNS_PER_BREAK == 0:
-                    mode = "interest_break_transition"
-            elif mode == "interest_break_transition":
-                mode = "interest_break_active"
-            elif mode == "interest_break_active":
-                mode = "teaching" # Should transition back to teaching
-            # --- ADDED --- Quiz time logic based on STUDENT_QUIZ_AFTER_TURNS
-            elif turns % STUDENT_QUIZ_AFTER_TURNS == 0 and mode not in ["quiz_time", "ending_session"]: # Avoid repeated quiz if already in quiz mode
-                mode = "quiz_time"
-            elif turns >= STUDENT_MAX_SESSION_TURNS:
-                mode = "ending_session"
-            
-            # --- ADDED --- Debug print for mode change
-            print(f"DEBUG: handle_response - new mode: {mode}, new turns: {turns}, teaching_turns: {teaching_turns}")
-
-
-            prompt = generate_student_system_prompt(mode, ", ".join(profile["interests"]), topic, segment)
-            # Ensure system prompt is always first or updated if it exists
-            if chat_hist and chat_hist[0]["role"] == "system":
-                chat_hist[0] = {"role": "system", "content": prompt}
-            else:
-                chat_hist.insert(0, {"role": "system", "content": prompt})
-
-
-            try:
-                client = openai.OpenAI()
-                res = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=chat_hist, max_tokens=250)
-                bot_reply = res.choices[0].message.content.strip()
-            except Exception as e_chat_hr: # --- MODIFIED --- Catch specific exception
-                bot_reply = "Sorry, I didn't understand that. Could you rephrase?"
-                print(f"Error in OpenAI Chat (handle_response): {e_chat_hr}")
-
-            chat_hist.append({"role": "assistant", "content": bot_reply})
-            disp_hist[-1][1] = bot_reply
-
-            try:
-                speech = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice=voice, input=bot_reply)
-                fp = STUDENT_AUDIO_DIR / f"turn_{uuid.uuid4()}.mp3"
-                with open(fp, "wb") as f:
-                    f.write(speech.content)
-                # --- ADDED --- Debug print
-                print(f"DEBUG: handle_response successfully returning. Bot reply: '{bot_reply[:50]}...'")
-                return (
-                    disp_hist,           # For st_chatbot component
-                    disp_hist,           # For st_display_history state
-                    chat_hist,           # For st_chat_history state
-                    profile,             # For st_student_profile state
-                    mode,                # For st_session_mode state
-                    turns,               # For st_turn_count state
-                    teaching_turns,      # For st_teaching_turns state
-                    str(fp),             # For st_audio_out component
-                    gr.update(value=None), # For st_mic_input component
-                    gr.update(value="")    # For st_text_input component
-                )
-            except Exception as e_tts_hr: # --- MODIFIED --- Catch specific exception
-                print(f"Error in TTS (handle_response): {e_tts_hr}")
-                # Ensure this error return also matches the new structure if it were to update the chatbot display
-                # For now, it's fine as it doesn't try to update st_chatbot directly with a state object
-                return (
-                    disp_hist, # This would be the old disp_hist if error happens before bot_reply is added
-                    disp_hist,
-                    chat_hist,
-                    profile,
-                    mode,
-                    turns,
-                    teaching_turns,
-                    None,
-                    gr.update(value=None),
-                    gr.update(value="")
-                )
-
-        event_inputs = [
-            st_mic_input, st_text_input, st_chat_history, st_display_history, st_student_profile,
-            st_session_mode, st_turn_count, st_teaching_turns, st_voice_dropdown,
-            student_id_state, course_id_state, lesson_id_state, lesson_topic_state, lesson_segment_state, st_session_start
-        ]
-        event_outputs = [
-            st_chatbot,           # For chatbot component
-            st_display_history,   # For st_display_history state
-            st_chat_history,      # For st_chat_history state
-            st_student_profile,   # For st_student_profile state
-            st_session_mode,      # For st_session_mode state
-            st_turn_count,        # For st_turn_count state
-            st_teaching_turns,    # For st_teaching_turns state
-            st_audio_out,         # For st_audio_out component
-            st_mic_input,         # For st_mic_input component
-            st_text_input         # For st_text_input component
-        ]
-    
-        st_mic_input.change(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
-        st_text_input.submit(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
-        st_send_button.click(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
+                st_mic_input.change(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
+                st_text_input.submit(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
+                st_send_button.click(fn=handle_response, inputs=event_inputs, outputs=event_outputs)
 
     return student_demo
 
