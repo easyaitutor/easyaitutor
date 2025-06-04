@@ -324,7 +324,7 @@ def send_daily_class_reminders():
                         student_id, student_email, student_name = student.get("id", "unknown"), student.get("email"), student.get("name", "Student")
                         if not student_email: continue
                         token, access_code = generate_access_token(student_id, course_id, lesson["lesson_number"], lesson_date)
-                        access_link = f"{APP_DOMAIN}/class?token={token}" # Use token[0] which is the JWT string
+                        access_link = f"{APP_DOMAIN}/class?token={token}&code={access_code}" # Use token[0] which is the JWT string
                         email_subject = f"Today's Class Link for {course_name}: {lesson['topic_summary']}"
                         email_html_body = f"""
                         <html><head><style>body {{font-family: sans-serif;}} strong {{color: #007bff;}} a {{color: #0056b3;}} .container {{padding: 20px; border: 1px solid #ddd; border-radius: 5px;}} .code {{font-size: 1.5em; font-weight: bold; background-color: #f0f0f0; padding: 5px 10px;}}</style></head>
@@ -518,7 +518,7 @@ def generate_plan_callback(course_name_from_input):
                     first_lesson["lesson_number"],
                     datetime.strptime(first_lesson["date"], "%Y-%m-%d").date()
                 )
-                access_link = f"{APP_DOMAIN}/class?token={token}"
+                access_link = f"{APP_DOMAIN}/class?token={token}&code={access_code}"
 
                 print(f"DEBUG [generate_plan]: sending email to {student_info['email']} → {access_link}")
 
