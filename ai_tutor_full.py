@@ -904,29 +904,51 @@ def build_student_tutor_ui():
 
                     current_lesson_segment = current_lesson_segment if isinstance(current_lesson_segment, str) else ""
                     prompt = generate_student_system_prompt("initial_greeting", "", display_topic, current_lesson_segment)
-                    
-                    audio_fp_str = None; msg_content = ""
+                    audio_fp_str = None
+                    msg_content = f"Hello! I'm having a slight technical difficulty with my opening lines. How are you today?" # Default error message
+    
                     try:
                         client = openai.OpenAI()
+                        print(f"PERF_DEBUG: Greeter LLM Start - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
                         res = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=[{"role": "system", "content": prompt}], max_tokens=150)
                         msg_content = res.choices[0].message.content.strip()
+                        print(f"PERF_DEBUG: Greeter LLM End - {datetime.now(dt_timezone.utc).isoformat()}. Reply: '{msg_content[:30]}...'") # ADDED
+    
                         try:
+                            print(f"PERF_DEBUG: Greeter TTS API Start - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
                             speech_res = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
+                            print(f"PERF_DEBUG: Greeter TTS API End - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
+    
                             audio_fp = STUDENT_AUDIO_DIR / f"intro_{uuid.uuid4()}.mp3"
+                            print(f"PERF_DEBUG: Greeter TTS File Write Start - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
                             with open(audio_fp, "wb") as f: f.write(speech_res.content)
                             audio_fp_str = str(audio_fp)
-                        except Exception as e_tts: print(f"TTS Error in tutor_greeter for main response: {e_tts}")
+                            print(f"PERF_DEBUG: Greeter TTS File Write End - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
+                        except Exception as e_tts:
+                            print(f"TTS Error in tutor_greeter for main response: {e_tts} at {datetime.now(dt_timezone.utc).isoformat()}") # MODIFIED
+                            print(f"PERF_DEBUG: Greeter TTS API/File End (Error) - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
+                            # msg_content remains, audio_fp_str will be None
                     except Exception as e_chat:
-                        print(f"Chat Completion Error in tutor_greeter: {e_chat}")
-                        msg_content = f"Hello! I'm ready to start our lesson on '{display_topic}', but I'm having a slight technical difficulty with my opening lines. How are you today?"
+                        print(f"Chat Completion Error in tutor_greeter: {e_chat} at {datetime.now(dt_timezone.utc).isoformat()}") # MODIFIED
+                        print(f"PERF_DEBUG: Greeter LLM End (Error) - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
+                        # Fallback message is already set in msg_content
+                        # Attempt TTS for the fallback message
                         try:
-                            client_fallback_tts = openai.OpenAI() 
+                            print(f"PERF_DEBUG: Greeter Fallback TTS API Start - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
+                            client_fallback_tts = openai.OpenAI()
                             speech_res_fallback = client_fallback_tts.audio.speech.create(model=STUDENT_TTS_MODEL, voice="nova", input=msg_content)
+                            print(f"PERF_DEBUG: Greeter Fallback TTS API End - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
+    
                             audio_fp_fallback = STUDENT_AUDIO_DIR / f"intro_fallback_{uuid.uuid4()}.mp3"
+                            print(f"PERF_DEBUG: Greeter Fallback TTS File Write Start - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
                             with open(audio_fp_fallback, "wb") as f: f.write(speech_res_fallback.content)
                             audio_fp_str = str(audio_fp_fallback)
-                        except Exception as e_tts_fallback: print(f"TTS Error in tutor_greeter for fallback message: {e_tts_fallback}")
-
+                            print(f"PERF_DEBUG: Greeter Fallback TTS File Write End - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
+                        except Exception as e_tts_fallback:
+                            print(f"TTS Error in tutor_greeter for fallback message: {e_tts_fallback} at {datetime.now(dt_timezone.utc).isoformat()}") # MODIFIED
+                            print(f"PERF_DEBUG: Greeter Fallback TTS API/File End (Error) - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
+                            # audio_fp_str remains None
+   
                     initial_display_history = [[None, msg_content]]
                     initial_chat_history = [{"role": "system", "content": prompt}, {"role": "assistant", "content": msg_content}]
                     print(f"DEBUG: tutor_greeter successfully returning AI greeting. Message: '{msg_content[:50]}...'")
@@ -983,27 +1005,32 @@ def build_student_tutor_ui():
                                     sid, cid, lid, topic, segment, start_time):
                     print(f"DEBUG: handle_response called. Mode: {mode}, Turns: {turns}, Mic path: {bool(mic_path)}, Text: '{text}'")
                     input_text = text.strip() if text else ""
+                    input_text = text.strip() if text else ""
                     if mic_path:
                         try:
+                            print(f"PERF_DEBUG: STT Start - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
                             client = openai.OpenAI()
                             with open(mic_path, "rb") as f:
                                 result = client.audio.transcriptions.create(file=f, model=STUDENT_WHISPER_MODEL)
                             input_text = result.text.strip()
+                            print(f"PERF_DEBUG: STT End - {datetime.now(dt_timezone.utc).isoformat()}. Transcribed: '{input_text[:30]}...'") # ADDED
                             if os.path.exists(mic_path): os.remove(mic_path)
-                        except Exception as e_stt: 
+                        except Exception as e_stt:
                             input_text = "(Audio could not be transcribed.)"
-                            print(f"Error in STT: {e_stt}")
-
+                            print(f"Error in STT: {e_stt} at {datetime.now(dt_timezone.utc).isoformat()}") # MODIFIED
+                            # Also log STT end here for consistency in failure cases
+                            print(f"PERF_DEBUG: STT End (Error) - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
+    
                     if not input_text:
                         print("DEBUG: handle_response - no input text, returning.")
                         return (
-                            disp_hist, disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, 
+                            disp_hist, disp_hist, chat_hist, profile, mode, turns, teaching_turns, None,
                             gr.update(value=None), gr.update(value="")
                         )
-
+    
                     disp_hist.append([input_text, None])
                     chat_hist.append({"role": "user", "content": input_text})
-
+    
                     turns += 1
                     if mode == "onboarding":
                         if input_text != "(Audio could not be transcribed.)":
@@ -1019,45 +1046,62 @@ def build_student_tutor_ui():
                     elif mode == "interest_break_transition":
                         mode = "interest_break_active"
                     elif mode == "interest_break_active":
-                        mode = "teaching" 
+                        mode = "teaching"
                     elif turns % STUDENT_QUIZ_AFTER_TURNS == 0 and mode not in ["quiz_time", "ending_session"]:
                         mode = "quiz_time"
                     elif turns >= STUDENT_MAX_SESSION_TURNS:
                         mode = "ending_session"
-                    
+    
                     print(f"DEBUG: handle_response - new mode: {mode}, new turns: {turns}, teaching_turns: {teaching_turns}")
-
+    
                     prompt = generate_student_system_prompt(mode, ", ".join(profile["interests"]), topic, segment)
                     if chat_hist and chat_hist[0]["role"] == "system":
                         chat_hist[0] = {"role": "system", "content": prompt}
                     else:
                         chat_hist.insert(0, {"role": "system", "content": prompt})
-
+    
+                    bot_reply = "An unexpected error occurred while generating my response." # Default
                     try:
                         client = openai.OpenAI()
+                        print(f"PERF_DEBUG: LLM Start - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
                         res = client.chat.completions.create(model=STUDENT_CHAT_MODEL, messages=chat_hist, max_tokens=250)
                         bot_reply = res.choices[0].message.content.strip()
-                    except Exception as e_chat_hr: 
+                        print(f"PERF_DEBUG: LLM End - {datetime.now(dt_timezone.utc).isoformat()}. Reply: '{bot_reply[:30]}...'") # ADDED
+                    except Exception as e_chat_hr:
                         bot_reply = "Sorry, I didn't understand that. Could you rephrase?"
-                        print(f"Error in OpenAI Chat (handle_response): {e_chat_hr}")
-
+                        print(f"Error in OpenAI Chat (handle_response): {e_chat_hr} at {datetime.now(dt_timezone.utc).isoformat()}") # MODIFIED
+                        # Also log LLM end here for consistency in failure cases
+                        print(f"PERF_DEBUG: LLM End (Error) - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
+    
+    
                     chat_hist.append({"role": "assistant", "content": bot_reply})
                     disp_hist[-1][1] = bot_reply
-
+    
+                    audio_file_path_str = None # Default for audio path
                     try:
+                        # Re-initialize client in case the previous one had an issue, though less likely here.
+                        # client = openai.OpenAI() # Not strictly necessary if client obj is stable
+                        print(f"PERF_DEBUG: TTS API Start - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
                         speech = client.audio.speech.create(model=STUDENT_TTS_MODEL, voice=voice, input=bot_reply)
+                        print(f"PERF_DEBUG: TTS API End - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
+    
                         fp = STUDENT_AUDIO_DIR / f"turn_{uuid.uuid4()}.mp3"
+                        print(f"PERF_DEBUG: TTS File Write Start - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
                         with open(fp, "wb") as f:
                             f.write(speech.content)
+                        audio_file_path_str = str(fp)
+                        print(f"PERF_DEBUG: TTS File Write End - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
                         print(f"DEBUG: handle_response successfully returning. Bot reply: '{bot_reply[:50]}...'")
                         return (
-                            disp_hist, disp_hist, chat_hist, profile, mode, turns, teaching_turns, str(fp), 
+                            disp_hist, disp_hist, chat_hist, profile, mode, turns, teaching_turns, audio_file_path_str,
                             gr.update(value=None), gr.update(value="")
                         )
-                    except Exception as e_tts_hr: 
-                        print(f"Error in TTS (handle_response): {e_tts_hr}")
+                    except Exception as e_tts_hr:
+                        print(f"Error in TTS (handle_response): {e_tts_hr} at {datetime.now(dt_timezone.utc).isoformat()}") # MODIFIED
+                        # Also log TTS API/File end here for consistency
+                        print(f"PERF_DEBUG: TTS API/File End (Error) - {datetime.now(dt_timezone.utc).isoformat()}") # ADDED
                         return (
-                            disp_hist, disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, 
+                            disp_hist, disp_hist, chat_hist, profile, mode, turns, teaching_turns, None, # Return None for audio_file_path_str on error
                             gr.update(value=None), gr.update(value="")
                         )
 
